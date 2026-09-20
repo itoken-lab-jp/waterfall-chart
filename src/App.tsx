@@ -25,7 +25,7 @@ export { layoutOf } from "./layout";
 
 /** 選んでいない棒・ハイライトに該当しない分の濃さ（棒グラフと同じ） */
 export const DIM_OPACITY = 0.35;
-/** 透かして描く棒（区切りの差）を薄めたときの下限。透かした濃さにさらに DIM_OPACITY を掛けると消えそうになるため */
+/** 透かして描く棒（比べる形の小計）を薄めたときの下限。透かした濃さにさらに DIM_OPACITY を掛けると消えそうになるため */
 export const MIN_DIM_OPACITY = 0.2;
 
 /** 濃さ alpha の棒を、選んでいない・ハイライトに該当しないときに薄めた濃さ（alpha = 1 なら DIM_OPACITY） */
@@ -205,7 +205,7 @@ export const App: React.FC<AppProps> = ({
                         {layout.bars.map((b, index) => {
                             const { bar } = b;
                             const ids = bar.selectionIds;
-                            // 区切りの差は透かして描く。薄めるときも、透かした濃さから薄める（消えないように下限あり）
+                            // 比べる形の小計は透かして描く。薄めるときも、透かした濃さから薄める（消えないように下限あり）
                             const alpha = bar.kind === BAR_KINDS.subtotal ? style.subtotalOpacity : 1;
                             const baseOpacity = bar.dimmed ? dimmedOpacity(alpha) : alpha;
                             return (
@@ -388,20 +388,6 @@ export const App: React.FC<AppProps> = ({
                                             strokeWidth={item.line.width}
                                             strokeDasharray={item.line.dash ?? undefined}
                                         />
-                                    ) : !hc && item.split && item.split.length > 1 ? (
-                                        // 区切りの差：左半分が増加、右半分が減少の色（どちらも透かす）
-                                        item.split.map((color, i) => (
-                                            <rect
-                                                key={i}
-                                                className="wf-legend-split"
-                                                x={x + (swatchWidth / item.split!.length) * i}
-                                                y={y}
-                                                width={swatchWidth / item.split!.length}
-                                                height={10}
-                                                fill={color}
-                                                fillOpacity={item.opacity}
-                                            />
-                                        ))
                                     ) : (
                                         <rect
                                             x={x}
@@ -409,7 +395,6 @@ export const App: React.FC<AppProps> = ({
                                             width={swatchWidth}
                                             height={10}
                                             fill={hc ? (item.kind === BAR_KINDS.total ? hc.foreground : hc.background) : item.color}
-                                            fillOpacity={!hc && item.opacity !== undefined && item.opacity < 1 ? item.opacity : undefined}
                                             stroke={hc ? hc.foreground : undefined}
                                             strokeDasharray={hc && item.kind !== "series" && item.kind !== "target" ? HC_DASH[item.kind as BarKind] : undefined}
                                         />

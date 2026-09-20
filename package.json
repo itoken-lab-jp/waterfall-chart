@@ -1,6 +1,6 @@
 {
   "name": "waterfall-chart",
-  "version": "1.7.2.0",
+  "version": "1.8.0.0",
   "description": "計画から実績までの差を、階層でドリルダウンしてたどるウォーターフォール",
   "license": "MIT",
   "private": true,

@@ -60,7 +60,7 @@ export type Shape = (typeof SHAPES)[keyof typeof SHAPES];
 
 /**
  * 棒の種類。total = 合計（軸から立つ）、increase・decrease・others = 増減（累計から浮く）、
- * subtotal = 比べる形の小計（その区切りの差の合計。浮いた棒で、累計は進めない）
+ * subtotal = 比べる形の小計（左端の合計からその段階までの差。浮いた棒で、累計は進めない）
  */
 export const BAR_KINDS = {
     total: "total",
@@ -71,7 +71,7 @@ export const BAR_KINDS = {
 } as const;
 export type BarKind = (typeof BAR_KINDS)[keyof typeof BAR_KINDS];
 
-/** 合計の棒の中身。event = イベントの値、origin = 起点、subtotal = 小計（比べる形では区切りの差）、final = 最後の合計 */
+/** 合計の棒の中身。event = イベントの値、origin = 起点、subtotal = 小計、final = 最後の合計 */
 export type TotalRole = "event" | "origin" | "subtotal" | "final";
 
 export interface TooltipItem {
@@ -152,21 +152,21 @@ export interface LegendItem {
     color: string;
     /** 系列を選ぶ ID。増加・減少などの項目は null */
     selectionId: ISelectionId | null;
-    /** 系列か、棒の種類（増加・減少・合計・区切りの差・その他）か、目標の線 */
+    /** 系列か、棒の種類（増加・減少・合計・その他）か、目標の線 */
     kind: "series" | BarKind | "target";
     /** 目標の線の印（線の太さと種類。グラフの線と同じ種類で、凡例では太さを 3px までにする）。棒の項目は無し */
     line?: { width: number; dash: string | null };
-    /** 印を左右に分けて塗る色（区切りの差：増加・減少）。1 つなら 1 色 */
-    split?: string[];
-    /** 印の濃さ（区切りの差は透かす）。無ければ 1 */
-    opacity?: number;
 }
 
 /** 凡例の印の線の太さの上限（太い線は凡例の行に収まらない） */
 const LEGEND_LINE_MAX = 3;
 
-/** 凡例の名前（標準と同じ「増加・減少・合計」） */
-export const LEGEND_NAMES = { increase: "増加", decrease: "減少", total: "合計", subtotal: "区切りの差" } as const;
+/**
+ * 凡例の名前（標準と同じ「増加・減少・合計」）。小計は凡例に出さない
+ * （ユーザー、2026-09-20「あえて小計の凡例はつけないっていう手もあり？色は他とおなじでしょ？透明度だけだよね」）。
+ * 見分けは、棒の名前・太字のラベル・区切りの終わりに立つこと・薄さで付く
+ */
+export const LEGEND_NAMES = { increase: "増加", decrease: "減少", total: "合計" } as const;
 
 export interface TargetLine {
     value: number;
@@ -205,7 +205,7 @@ export interface ViewStyle {
         show: boolean;
         /** color が空なら自動（棒の外は灰色、棒の中は棒の色に合わせて白か黒） */
         font: TextStyle;
-        /** 合計・小計・区切りの差の棒のラベル。color が空なら値のラベルと同じ（それも空なら自動） */
+        /** 合計・小計の棒のラベル。color が空なら値のラベルと同じ（それも空なら自動） */
         totalFont: TextStyle;
         orientation: "horizontal" | "vertical";
         position: string;
@@ -215,7 +215,7 @@ export interface ViewStyle {
     categoryAxis: {
         show: boolean;
         font: TextStyle;
-        /** 合計・小計・区切りの差の棒の項目名 */
+        /** 合計・小計の棒の項目名 */
         totalFont: TextStyle;
         /** 項目名に使う大きさの上限（ビュー全体に対する割合 0〜1）。縦向きは高さ、横向きは幅 */
         maxShare: number;
@@ -227,7 +227,7 @@ export interface ViewStyle {
     gridlines: { show: boolean; color: string; opacity: number; width: number; dash: string | null };
     legend: { show: boolean; position: LegendPosition; font: TextStyle; title: string };
     columns: { categorySpacing: number; outerPadding: number | null };
-    /** 区切りの差の棒の濃さ（1 − 透過性）。ハイコントラストでは 1（ほかの棒と同じ） */
+    /** 小計（比べる形）の棒の濃さ（1 − 透過性）。ハイコントラストでは 1（ほかの棒と同じ） */
     subtotalOpacity: number;
     /** 軸を切った印の塗り（背景と同じ色） */
     background: string;
@@ -261,9 +261,6 @@ export interface ViewModel {
     format: DataDrivenFormat;
     style: ViewStyle;
 }
-
-/** 比べる形の小計の名前に付ける語（「売上総利益の差」） */
-export const SUBTOTAL_DIFF_SUFFIX = "の差";
 
 /** 階層が無いときの、形 1 の増減の棒の名前 */
 export const DIFF_TEXT = "差";
@@ -305,7 +302,7 @@ const finiteOr = (value: unknown, fallback: number): number => {
     const n = typeof value === "number" ? value : Number(value);
     return value === null || value === undefined || value === "" || !Number.isFinite(n) ? fallback : n;
 };
-/** 区切りの差の透過性の既定（%） */
+/** 小計（比べる形）の透過性の既定（%） */
 const DEFAULT_SUBTOTAL_TRANSPARENCY = 50;
 
 /** FontControl の値。size はポイント */
@@ -465,7 +462,7 @@ interface Colors {
 
 /**
  * 色を toward に amount だけ寄せる（#RRGGBB だけ。読めなければそのまま）。
- * 透かして描く区切りの差の見た目の色（背景と混ざった色）を出し、中に置くラベルの文字色を決めるのに使う
+ * 透かして描く小計の見た目の色（背景と混ざった色）を出し、中に置くラベルの文字色を決めるのに使う
  */
 export function blend(color: string, toward: string, amount: number): string {
     const parse = (c: string) => {
@@ -483,7 +480,7 @@ export function blend(color: string, toward: string, amount: number): string {
     return `#${[16, 8, 0].map((shift) => channel(shift).toString(16).padStart(2, "0")).join("").toUpperCase()}`;
 }
 
-/** 区切りの差の色：差が 0 以上なら増加の色、マイナスなら減少の色（0 は増加に寄せる） */
+/** 比べる形の小計の色：差が 0 以上なら増加の色、マイナスなら減少の色（0 は増加に寄せる） */
 export const subtotalColorOf = (delta: number, colors: { increase: string; decrease: string }): string =>
     delta >= 0 ? colors.increase : colors.decrease;
 
@@ -838,6 +835,12 @@ export function transform(
     ): { level: number; hLevel: number | null } => {
         let level = start.level;
         let hLevel = start.hLevel;
+        // 比べる形の小計は、この区間の左端の合計からその段階までの差にする（docs/waterfall.md の「小計」）。
+        // 区間の始まりの高さと、そこからの左端・右端の値の積み上げを覚えておく
+        const segmentStart = start.level;
+        const hSegmentStart = start.hLevel;
+        let beforeSum: number | null = null;
+        let afterSum: number | null = null;
         const format: Formatter = sources[to].format;
         const partsOf = (item: ParsedItem): Part[] | null => {
             const after = item.values[to];
@@ -886,13 +889,17 @@ export function transform(
         };
 
         for (const section of sections) {
-            const sectionStart = level;
-            const hSectionStart = hLevel;
             const entries = section.items
                 .map((item) => ({ item, parts: partsOf(item) }))
                 .filter((entry): entry is { item: ParsedItem; parts: Part[] } => entry.parts !== null)
                 .map((entry) => ({ ...entry, delta: entry.parts.reduce((sum, p) => sum + p.delta, 0) }));
             if (!entries.length) continue;
+            if (from !== null) {
+                const sectionBefore = sumOf(entries.map((e) => sumOf(e.item.values[from])));
+                const sectionAfter = sumOf(entries.map((e) => sumOf(e.item.values[to])));
+                if (sectionBefore !== null) beforeSum = (beforeSum ?? 0) + sectionBefore;
+                if (sectionAfter !== null) afterSum = (afterSum ?? 0) + sectionAfter;
+            }
             const sorted = sortEntries(entries, order);
             const { kept, merged } = othersOn ? splitOthers(sorted, othersKeep) : { kept: sorted, merged: [] };
 
@@ -959,13 +966,16 @@ export function transform(
                     { displayName: section.name, value: format(level) },
                 ]);
             } else if (section.name !== null && from !== null) {
-                // 比べる形の小計は、その区切りの差の合計（浮いた棒）。累計（計画 ＋ そこまでの差）は
-                // 計画の値でも実績の値でもなく読み違えやすいため（docs/waterfall.md の「小計」）
-                const name = `${section.name}${SUBTOTAL_DIFF_SUFFIX}`;
-                const delta = level - sectionStart;
-                const before = sumOf(entries.map((e) => sumOf(e.item.values[from])));
-                const after = sumOf(entries.map((e) => sumOf(e.item.values[to])));
-                const hDelta = hLevel === null || hSectionStart === null ? null : hLevel - hSectionStart;
+                // 比べる形の小計は、この区間の左端の合計からその段階までの差（浮いた棒）。
+                // 区切りの中だけの差にすると、名前（営業利益の差）と中身（販管費の差）がずれる（docs/waterfall.md の「小計」、#261）。
+                // 左端・右端の値も、この区間の始まりからその段階までを積み上げた値（営業利益そのものの計画と実績）
+                // 名前は段階の名前そのもの（「営業利益」）。この形ではあいだの棒もすべて差なので、小計だけ「の差」を付けない
+                // （ユーザー、2026-09-20「～の差って入れるのやめない？」）。差であることは符号付きのラベルで分かる
+                const name = section.name;
+                const delta = level - segmentStart;
+                const before = beforeSum;
+                const after = afterSum;
+                const hDelta = hLevel === null || hSegmentStart === null ? null : hLevel - hSegmentStart;
                 const fully = hDelta !== null && Math.abs(hDelta - delta) <= Math.abs(delta) * EPSILON + EPSILON;
                 const ids = parsed.idsOf(entries.flatMap((e) => e.item.rows));
                 bars.push({
@@ -975,7 +985,7 @@ export function transform(
                     label: name,
                     parentLabel: "",
                     fullLabel: name,
-                    from: sectionStart,
+                    from: segmentStart,
                     to: level,
                     value: delta,
                     labelText: "",
@@ -983,20 +993,21 @@ export function transform(
                     color: subtotalColorOf(delta, colors),
                     segments: [
                         {
-                            from: sectionStart,
+                            from: segmentStart,
                             to: level,
                             color: subtotalColorOf(delta, colors),
                             series: null,
-                            highlightTo: hasHighlights && hDelta !== null && !fully ? sectionStart + hDelta : null,
+                            highlightTo: hasHighlights && hDelta !== null && !fully ? segmentStart + hDelta : null,
                             selectionIds: ids,
                         },
                     ],
                     dimmed: hasHighlights && !fully,
                     selectionIds: ids,
+                    // 左端・右端・差の 3 つ（増減の棒と同じ並び）
                     tooltip: [
-                        { displayName: name, value: withSign(format(delta), delta, true) },
                         { displayName: sources[from].name, value: sources[from].format(before) },
                         { displayName: sources[to].name, value: format(after) },
+                        { displayName: DIFF_TEXT, value: withSign(format(delta), delta, true) },
                     ],
                 });
                 rateBase.push({ growth: before, contribution: start.contributionBase });
@@ -1184,19 +1195,9 @@ export function transform(
     }
 
     // --- 凡例 ---------------------------------------------------------------------------------
-    // 標準と同じ「増加・減少・合計（・区切りの差・その他）」。棒にある種類だけ出す。
-    // 系列で積むときは、増減の棒は系列の色なので「系列 ＋ 合計（・区切りの差）」
+    // 標準と同じ「増加・減少・合計（・その他）」。棒にある種類だけ出す。小計は出さない。
+    // 系列で積むときは、増減の棒は系列の色なので「系列 ＋ 合計」
     const present = (kind: BarKind) => bars.some((b) => b.kind === kind);
-    // 区切りの差は 1 項目。印は、グラフにある符号の色（両方あれば左半分が増加、右半分が減少）を透かして描く
-    const subtotalLegend = (): LegendItem[] => {
-        const diffs = bars.filter((b) => b.kind === BAR_KINDS.subtotal);
-        if (!diffs.length) return [];
-        const split = [
-            ...(diffs.some((b) => b.value >= 0) ? [colors.increase] : []),
-            ...(diffs.some((b) => b.value < 0) ? [colors.decrease] : []),
-        ];
-        return [{ name: LEGEND_NAMES.subtotal, color: split[0], split, opacity: style.subtotalOpacity, selectionId: null, kind: BAR_KINDS.subtotal }];
-    };
     const legend: LegendItem[] = [
         ...(hasSeries
             ? series.map((s, i): LegendItem => ({ name: s.name, color: seriesColors[i], selectionId: s.selectionId, kind: "series" }))
@@ -1210,7 +1211,6 @@ export function transform(
         ...(present(BAR_KINDS.total)
             ? [{ name: LEGEND_NAMES.total, color: colors.total, selectionId: null, kind: BAR_KINDS.total } as LegendItem]
             : []),
-        ...subtotalLegend(),
         ...(!hasSeries && present(BAR_KINDS.others)
             ? [{ name: othersLabel, color: colors.others, selectionId: null, kind: BAR_KINDS.others } as LegendItem]
             : []),

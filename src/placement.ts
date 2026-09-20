@@ -21,7 +21,7 @@ export interface Box {
     height: number;
 }
 
-/** 障害物。四角か、太さのある線分（つなぎの線・目標の線など。斜めでもよい） */
+/** 障害物。四角か、太さのある線分（接続線・目標の線など。斜めでもよい） */
 export type Obstacle =
     | { kind: "box"; box: Box; owner?: string }
     | { kind: "segment"; x1: number; y1: number; x2: number; y2: number; width: number; owner?: string };

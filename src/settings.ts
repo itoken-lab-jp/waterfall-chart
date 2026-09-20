@@ -345,10 +345,13 @@ export class LayoutCardSettings extends SimpleCard {
     }
 }
 
-/** 小さい増減を 1 本にまとめる。既定はオフ */
+/**
+ * 小さい増減を 1 本にまとめる。既定はオフ。カードの名前と数の項目は標準と同じ「詳細」「最大の内訳」
+ * （ユーザー、2026-09-20）。保存先は others・count のまま
+ */
 export class OthersCardSettings extends SimpleCard {
     name = "others";
-    displayName = "その他";
+    displayName = "詳細";
 
     show = new formattingSettings.ToggleSwitch({
         name: "show",
@@ -361,13 +364,14 @@ export class OthersCardSettings extends SimpleCard {
     /** 素の numeric に options を付けない（format-pane Skill）。範囲は viewModel でクランプする */
     count = new formattingSettings.NumUpDown({
         name: "count",
-        displayName: "残す数（区切りごと）",
+        displayName: "最大の内訳",
+        description: "区切りごとに、増減の絶対値の大きいものをこの数だけ残し、残りを 1 本にまとめる",
         value: DEFAULT_OTHERS_COUNT,
     });
 
     label = new formattingSettings.TextInput({
         name: "label",
-        displayName: "名前",
+        displayName: "まとめた棒の名前",
         value: "",
         placeholder: DEFAULT_OTHERS_LABEL,
     });
@@ -399,7 +403,8 @@ export interface SeriesColorTarget {
  */
 export class ColumnsCardSettings extends CompositeCard {
     name = "columns";
-    displayName = "列";
+    // 標準の日本語の表示は「列」だが、縦向き・横向きのどちらでも読めるよう「棒」にする（棒グラフと同じ。保存先は columns のまま）
+    displayName = "棒";
 
     increaseFill = new formattingSettings.ColorPicker({
         name: "increaseFill",
@@ -421,14 +426,14 @@ export class ColumnsCardSettings extends CompositeCard {
     });
 
     /**
-     * 比べる形の小計（区切りの差）の透過性。色は増加・減少の色（差が 0 以上なら増加、マイナスなら減少）を使い、
+     * 比べる形の小計の透過性。色は増加・減少の色（差が 0 以上なら増加、マイナスなら減少）を使い、
      * これだけ透かして描く（ユーザー、2026-09-19「小計の色はほかの上下の色と合わせて、透明度だけ落とす」）。
-     * 素の numeric なので options を付けない。viewModel で 0〜100 にクランプする
+     * 保存先の名前は subtotalTransparency のまま。素の numeric なので options を付けない。viewModel で 0〜100 にクランプする
      */
     subtotalTransparency = new formattingSettings.NumUpDown({
         name: "subtotalTransparency",
-        displayName: "区切りの差の透過性 (%)",
-        description: "比べる形で小計を挟んだときの、区切りの差の棒。色は増加・減少の色",
+        displayName: "小計の透過性 (%)",
+        description: "比べる形で小計を挟んだときの、浮いた小計の棒。色は増加・減少の色",
         value: 50,
     });
 
@@ -498,7 +503,7 @@ export class ColumnsCardSettings extends CompositeCard {
 }
 
 /**
- * 凡例。標準と同じく「増加・減少・合計（・区切りの差・その他）」を出す。系列があるときは系列と合計
+ * 凡例。標準と同じく「増加・減少・合計（・その他）」を出す。小計は出さない。系列があるときは系列と合計
  * （系列で積むと増減の棒は系列の色になり、増加・減少の色を使わないため）。名前は棒グラフと同じ
  */
 export class LegendCardSettings extends CompositeCard {
@@ -553,14 +558,14 @@ export class LegendCardSettings extends CompositeCard {
     groups = [this.optionsGroup, this.textGroup, this.titleGroup];
 }
 
-/** 棒と棒をつなぐ線 */
+/** 棒と棒をつなぐ線（標準と同じ「接続線」。ユーザーの言葉、2026-09-20） */
 export class ConnectorsCardSettings extends SimpleCard {
     name = "connectors";
-    displayName = "つなぎの線";
+    displayName = "接続線";
 
     show = new formattingSettings.ToggleSwitch({
         name: "show",
-        displayName: "つなぎの線",
+        displayName: "接続線",
         value: true,
     });
 
@@ -576,7 +581,7 @@ export class ConnectorsCardSettings extends SimpleCard {
     /** 素の numeric なので options を付けない。viewModel で 0.5〜10 にクランプする */
     width = new formattingSettings.NumUpDown({
         name: "width",
-        displayName: "太さ",
+        displayName: "幅 (px)",
         value: 1,
     });
 
@@ -688,7 +693,7 @@ export class DataLabelsCardSettings extends CompositeCard {
         slices: [this.font, this.color, this.unitType, this.precision, this.plusSign, this.rateType],
     });
 
-    /** 合計・小計・区切りの差の棒のラベル。既定で太字にして、増減のラベルと見分ける */
+    /** 合計・小計の棒のラベル。既定で太字にして、増減のラベルと見分ける */
     totalFont = fontControl("total", "フォント", 9, true);
 
     /** 空 = 値のラベルと同じ（それも空なら自動） */
@@ -701,7 +706,7 @@ export class DataLabelsCardSettings extends CompositeCard {
     totalsGroup = new Group({
         name: "labelTotals",
         displayName: "合計のラベル",
-        description: "合計・小計・区切りの差の棒のラベル",
+        description: "合計・小計の棒のラベル",
         slices: [this.totalFont, this.totalColor],
     });
 
@@ -736,7 +741,7 @@ export class TargetCardSettings extends SimpleCard {
 
     width = new formattingSettings.NumUpDown({
         name: "width",
-        displayName: "太さ",
+        displayName: "幅 (px)",
         value: 1.5,
     });
 
@@ -797,7 +802,7 @@ export class ConstantLineCardSettings extends SimpleCard {
 
     width = new formattingSettings.NumUpDown({
         name: "width",
-        displayName: "太さ",
+        displayName: "幅 (px)",
         value: 1,
     });
 
@@ -886,7 +891,7 @@ export class CategoryAxisCardSettings extends CompositeCard {
     });
 
     /**
-     * 合計・小計・区切りの差の棒の項目名（起点・左端と右端・小計・最後の合計）。既定で太字にして、増減の項目と見分ける。
+     * 合計・小計の棒の項目名（起点・左端と右端・小計・最後の合計）。既定で太字にして、増減の項目と見分ける。
      * データ ラベルの「合計のラベル」と同じ形（名前は total を前に付ける）
      */
     totalFont = fontControl("total", "フォント", 9, true);
@@ -901,7 +906,7 @@ export class CategoryAxisCardSettings extends CompositeCard {
     totalsGroup = new Group({
         name: "categoryTotals",
         displayName: "合計のラベル",
-        description: "起点・左端と右端・小計・区切りの差・最後の合計の棒の名前",
+        description: "起点・左端と右端・小計・最後の合計の棒の名前",
         slices: [this.totalFont, this.totalColor],
     });
 
@@ -1040,7 +1045,7 @@ export class ValueAxisCardSettings extends CompositeCard {
 
     unitShow = new formattingSettings.ToggleSwitch({
         name: "unitShow",
-        displayName: "単位ラベル",
+        displayName: "単位ラベルの表示",
         value: true,
     });
 
@@ -1143,7 +1148,7 @@ export interface DataDrivenFormat {
     hasTarget: boolean;
     seriesTargets: SeriesColorTarget[];
     horizontal: boolean;
-    /** 比べる形で小計を挟んでいる（区切りの差の棒がある） */
+    /** 比べる形で小計を挟んでいる（浮いた小計の棒がある） */
     subtotalDiff: boolean;
 }
 

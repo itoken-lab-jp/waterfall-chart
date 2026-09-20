@@ -324,7 +324,7 @@ function layoutWith(
     const categoryFont = renderFontOf(style.categoryAxis.font);
     const labelFont = renderFontOf(style.dataLabels.font);
     const legendFont = renderFontOf(style.legend.font);
-    // 合計・小計・区切りの差の棒のラベルと項目名は別の文字（既定は太字）
+    // 合計・小計の棒のラベルと項目名は別の文字（既定は太字）
     const isTotalBar = (b: Bar) => b.kind === BAR_KINDS.total || b.kind === BAR_KINDS.subtotal;
     const totalCategoryFont = renderFontOf(style.categoryAxis.totalFont);
     const categoryFontOf = (b: Bar) => (isTotalBar(b) ? totalCategoryFont : categoryFont);
@@ -589,15 +589,27 @@ function layoutWith(
         }
     }
 
-    // --- つなぎの線（棒の終わりの累計から次の棒へ） ---------------------------------------
+    // --- 接続線（棒の終わりの累計の高さで、前の棒の左端から次の棒の右端まで） ---------------------
+    // 標準のウォーターフォールと同じ引き方（2026-09-19 に撮った第 26 ページ ① で、どの線も棒 2 本ぶんの幅にまたがっていた）。
+    // 棒の上（下）の辺にも線が重なる。横向きは、前の棒の上端から次の棒の下端まで。
+    // 小計（浮いた棒）は累計を進めないので、前後の線は同じ高さになる。同じ高さの線は 1 本にまとめる
+    // （二重に引くと、点線・破線の模様がずれて濃く見えるため）
     const connectors: Line[] = [];
     for (let k = 0; k + 1 < laid.length; k++) {
         const level = pos(laid[k].bar.to);
         const a = laid[k].rect;
         const b = laid[k + 1].rect;
-        connectors.push(
-            horizontal ? { x1: level, y1: a.y + a.height, x2: level, y2: b.y } : { x1: a.x + a.width, y1: level, x2: b.x, y2: level }
-        );
+        const [u0, u1] = horizontal ? [a.y, b.y + b.height] : [a.x, b.x + b.width];
+        const line = horizontal ? { x1: level, y1: u0, x2: level, y2: u1 } : { x1: u0, y1: level, x2: u1, y2: level };
+        const last = connectors[connectors.length - 1];
+        const sameLevel = last && Math.abs((horizontal ? last.x1 : last.y1) - level) < 0.5;
+        if (sameLevel) {
+            // 同じ高さの線は、端を伸ばして 1 本にする
+            if (horizontal) last.y2 = Math.max(last.y2, u1);
+            else last.x2 = Math.max(last.x2, u1);
+        } else {
+            connectors.push(line);
+        }
     }
 
     // --- 目盛り・グリッド線（グリッド線は中身の長さいっぱい） --------------------------------------
@@ -795,9 +807,9 @@ function layoutWith(
         };
     }
     // --- ラベルの置き方（docs/waterfall.md「見せ方」） --------------------------------------------------------
-    // 1. ぶつかってはいけない物を集める：棒、つなぎの線、目標の線、定数線、軸（目盛り・タイトル）、項目名の側、凡例、単位のラベル
+    // 1. ぶつかってはいけない物を集める：棒、接続線、目標の線、定数線、軸（目盛り・タイトル）、項目名の側、凡例、単位のラベル
     // 2. ラベルごとに、棒のすぐそばの候補を好ましい順に作る（書式の「位置」が自動でなければ、その 1 つだけ）
-    // 3. 大事なラベルから置く（合計 → 区切りの差 → 増減の絶対値の大きい順。そのあと定数線・目標の名前）。
+    // 3. 大事なラベルから置く（合計 → 小計 → 増減の絶対値の大きい順。そのあと定数線・目標の名前）。
     //    候補を上から試し、何ともぶつからない最初の場所に置く。どこにも置けなければ出さない（値はツールヒントで見られる）
     const BIG = 1e6;
     /** 中身（スクロールするときはスクロールする側）の範囲。ラベルはこの中に出す */
@@ -909,7 +921,7 @@ function layoutWith(
             }
         };
         const across = horizontal ? rect.y + rect.height / 2 : rect.x + rect.width / 2;
-        // 区切りの差は透かして描くので、背景と混ざった色で文字色を決める
+        // 比べる形の小計は透かして描くので、背景と混ざった色で文字色を決める
         const rawColor = bar.segments[0]?.color ?? bar.color;
         const segmentColor =
             bar.kind === BAR_KINDS.subtotal && style.subtotalOpacity < 1 ? blend(rawColor, style.background, 1 - style.subtotalOpacity) : rawColor;
