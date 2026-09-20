@@ -1,0 +1,85 @@
+/*
+ * 色・線の太さ・文字サイズなど書式ペインで変える値は、SVG の属性か style で渡す。
+ * ここに stroke や fill を書くと CSS が SVG の属性に勝ち、書式ペインの値が効かなくなる（format-pane Skill）。
+ */
+
+.wf-container {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    user-select: none;
+    position: relative;
+}
+
+.wf-svg {
+    display: block;
+}
+
+/* 棒・項目名などの窓。項目が多いと、項目の方向にスクロールする（標準と同じ） */
+.wf-scroll {
+    position: absolute;
+    overflow: hidden;
+}
+
+.wf-scroll-x {
+    overflow-x: auto;
+}
+
+.wf-scroll-y {
+    overflow-y: auto;
+}
+
+/* スクロールしないもの（値の軸・タイトル・凡例） */
+.wf-overlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: block;
+}
+
+.wf-landing {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    padding: 12px;
+    box-sizing: border-box;
+    color: #605e5c;
+    font-family: "Segoe UI", wf_segoe-ui_normal, helvetica, arial, sans-serif;
+    font-size: 12px;
+    line-height: 1.6;
+    text-align: center;
+}
+
+.wf-bar {
+    cursor: pointer;
+    outline: none;
+
+    &:hover .wf-bar-rect {
+        filter: brightness(0.9);
+    }
+
+    /* キーボードで選んでいる棒の枠。色は描画側で渡し、ここでは出し入れだけする */
+    .wf-focus {
+        visibility: hidden;
+    }
+
+    &:focus-visible .wf-focus {
+        visibility: visible;
+    }
+}
+
+.wf-legend-selectable {
+    cursor: pointer;
+    outline: none;
+
+    &:focus-visible text {
+        text-decoration: underline;
+    }
+}
+
+.wf-tick,
+.wf-label {
+    font-variant-numeric: tabular-nums;
+}
