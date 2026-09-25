@@ -255,6 +255,16 @@
                         }
                     }
                 },
+                "startFill": {
+                    "displayName": "起点",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
                 "othersFill": {
                     "displayName": "その他",
                     "type": {

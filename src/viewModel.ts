@@ -480,6 +480,8 @@ interface Colors {
     increase: string;
     decrease: string;
     total: string;
+    /** 左端の合計（起点）。書式で決めなければ total と同じ */
+    start: string;
     others: string;
 }
 
@@ -527,6 +529,8 @@ function resolveColors(settings: VisualFormattingSettingsModel, host: IVisualHos
     const total = pick(card.totalFill, themeTotal);
     return {
         total,
+        // 空なら合計の色（テーマの色ではなく、書式で選んだ合計の色にも付いていく）
+        start: pick(card.startFill, total),
         increase: pick(card.increaseFill, themeIncrease),
         decrease: pick(card.decreaseFill, themeDecrease),
         others: pick(card.othersFill, themeOthers),
@@ -1122,6 +1126,15 @@ export function transform(
         }
     }
 
+    // --- 起点の色：左端の合計（比べる形の左端のイベント、期首などの起点）だけ -------------------------------
+    // 左端が増減の棒（計画と実績の差だけを並べる形など）なら、起点は無い
+    const first = bars[0];
+    const startBar = first && first.kind === BAR_KINDS.total && (first.totalRole === "event" || first.totalRole === "origin") ? first : null;
+    if (startBar) {
+        startBar.color = colors.start;
+        for (const segment of startBar.segments) segment.color = colors.start;
+    }
+
     // --- 率 -------------------------------------------------------------------------------
     if (rateType !== RATE_TYPES.none) {
         bars.forEach((bar, i) => {
@@ -1265,7 +1278,15 @@ export function transform(
             ? [{ name: LEGEND_NAMES.decrease, color: colors.decrease, selectionId: null, kind: BAR_KINDS.decrease } as LegendItem]
             : []),
         ...(present(BAR_KINDS.total)
-            ? [{ name: LEGEND_NAMES.total, color: colors.total, selectionId: null, kind: BAR_KINDS.total } as LegendItem]
+            ? [
+                  {
+                      name: LEGEND_NAMES.total,
+                      // 起点のほかに合計の棒が無ければ、起点の色（凡例と棒の色をそろえる）。起点の色は凡例に足さず、ラベルで伝える
+                      color: bars.some((b) => b.kind === BAR_KINDS.total && b !== startBar) ? colors.total : colors.start,
+                      selectionId: null,
+                      kind: BAR_KINDS.total,
+                  } as LegendItem,
+              ]
             : []),
         ...(!hasSeries && present(BAR_KINDS.others)
             ? [{ name: othersLabel, color: colors.others, selectionId: null, kind: BAR_KINDS.others } as LegendItem]

@@ -486,7 +486,18 @@ export class ColumnsCardSettings extends CompositeCard {
     totalFill = new formattingSettings.ColorPicker({
         name: "totalFill",
         displayName: "合計",
-        description: "起点・左端と右端・小計・最後の合計の棒",
+        description: "右端・小計・最後の合計の棒（起点の色を決めなければ、左端の合計も）",
+        value: { value: "" },
+    });
+
+    /**
+     * 左端の合計（比べる形の左端のイベント、期首などの起点）だけの色。空なら合計の色（既存のレポートの見た目を変えない）。
+     * 前年・計画を灰、今年・実績を濃い色にして両端を見分ける作りが多い（2026-09-25 ユーザー）。標準に無い項目
+     */
+    startFill = new formattingSettings.ColorPicker({
+        name: "startFill",
+        displayName: "起点",
+        description: "左端の合計（計画・前年・期首など）の棒。空なら合計の色",
         value: { value: "" },
     });
 
@@ -543,7 +554,7 @@ export class ColumnsCardSettings extends CompositeCard {
     colorGroup = new Group({
         name: "columnsColor",
         displayName: "色",
-        slices: [this.increaseFill, this.decreaseFill, this.totalFill, this.othersFill, this.subtotalStyle, this.subtotalTransparency],
+        slices: [this.increaseFill, this.decreaseFill, this.totalFill, this.startFill, this.othersFill, this.subtotalStyle, this.subtotalTransparency],
     });
 
     layoutGroup = new Group({
