@@ -63,6 +63,8 @@ export class Visual implements IVisual {
                 VisualFormattingSettingsModel,
                 dataView
             );
+            // 軸のタイトル・凡例のタイトルと位置は、保存が無ければテーマ（基本テーマの Fluent 2 など）の値に従う
+            this.formattingSettings.applyThemeDefaults(dataView?.metadata?.objects);
             const viewModel: ViewModel = transform(dataView, this.host, this.formattingSettings);
             // イベントの選択肢・系列の色などはデータ次第なので、populate のあとに流し込む
             this.formattingSettings.applyData(viewModel.format);

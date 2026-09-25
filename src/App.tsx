@@ -16,7 +16,7 @@ import * as React from "react";
 import powerbi from "powerbi-visuals-api";
 
 import { BAR_KINDS, Bar, BarKind, Segment, TooltipTarget, ViewModel } from "./viewModel";
-import { ChartLayout, Line, TextLayout, layoutOf } from "./layout";
+import { ChartLayout, Line, Rect, SegmentLayout, TextLayout, barPath, layoutOf, subtotalPaint } from "./layout";
 
 import IViewport = powerbi.IViewport;
 import ISelectionId = powerbi.visuals.ISelectionId;
@@ -61,7 +61,15 @@ export const LABEL_BACKGROUND_RADIUS = 3;
 /** 目標の線にマウスを当てる当たりの太さ（px） */
 const REFERENCE_HIT_WIDTH = 7;
 
-function Text({ layout, className, opacity, title }: { layout: TextLayout; className: string; opacity?: number; title?: string }) {
+/** 棒の形。角丸があれば値の向きの端だけを丸めた path、無ければ今までどおり rect */
+function barShape(rect: Rect, corner: SegmentLayout["corner"], props: React.SVGAttributes<SVGElement>): React.ReactElement {
+    // 角丸が無いときは 1.11 までと同じ属性の並び（class、位置と大きさ、塗り…）で描く
+    const { className, ...rest } = props;
+    return corner ? <path className={className} d={barPath(rect, corner)} {...rest} /> : <rect className={className} {...rect} {...rest} />;
+}
+
+/** hover：マウスを受けて、title をツールヒントに出す（ドリルの位置。ほかの文字はマウスを通す） */
+function Text({ layout, className, opacity, title, hover }: { layout: TextLayout; className: string; opacity?: number; title?: string; hover?: boolean }) {
     const { font } = layout;
     const bg = layout.background;
     return (
@@ -69,7 +77,7 @@ function Text({ layout, className, opacity, title }: { layout: TextLayout; class
             className={className}
             transform={`translate(${layout.x} ${layout.y})${layout.rotate ? ` rotate(${layout.rotate})` : ""}`}
             opacity={opacity}
-            pointerEvents="none"
+            pointerEvents={hover ? "visiblePainted" : "none"}
         >
             {title && <title>{title}</title>}
             {bg && (
@@ -111,6 +119,8 @@ export const App: React.FC<AppProps> = ({
     onTooltipMove,
     onTooltipHide,
 }) => {
+    // 斜線の模様の id を、同じページのほかのウォーターフォールとぶつけない（SVG の id はページ全体で引かれる）
+    const uid = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
     const backgroundHandlers = {
         onClick: () => onClearSelection(),
         onContextMenu: (e: React.MouseEvent) => {
@@ -190,18 +200,6 @@ export const App: React.FC<AppProps> = ({
                                 />
                             ))}
 
-                        {style.connectors.show &&
-                            layout.connectors.map((c, i) => (
-                                <line
-                                    key={`connector-${i}`}
-                                    className="wf-connector"
-                                    {...lineProps(c)}
-                                    stroke={style.connectors.color}
-                                    strokeWidth={style.connectors.width}
-                                    strokeDasharray={style.connectors.dash ?? undefined}
-                                />
-                            ))}
-
                         {layout.bars.map((b, index) => {
                             const { bar } = b;
                             const ids = bar.selectionIds;
@@ -234,27 +232,55 @@ export const App: React.FC<AppProps> = ({
                                     {b.segments.map((s, i) => {
                                         const picked = !selectionActive || segmentPicked(bar, s.segment);
                                         const opacity = picked ? baseOpacity : dimmedOpacity(alpha);
-                                        const fill = hc ? (bar.kind === BAR_KINDS.total ? hc.foreground : hc.background) : s.segment.color;
+                                        // 比べる形の小計は、ふつうの増減と見分けられるように描き分ける（ハイコントラストでは点線の枠）
+                                        const paint = !hc && bar.kind === BAR_KINDS.subtotal ? subtotalPaint(style, s.segment.color) : null;
+                                        const hatchId = paint?.hatch ? `wf-hatch-${uid}-${index}-${i}` : null;
+                                        const fill = hc
+                                            ? bar.kind === BAR_KINDS.total
+                                                ? hc.foreground
+                                                : hc.background
+                                            : paint
+                                              ? hatchId
+                                                  ? `url(#${hatchId})`
+                                                  : paint.fill
+                                              : s.segment.color;
                                         return (
                                             <React.Fragment key={i}>
-                                                <rect
-                                                    className="wf-bar-rect"
-                                                    {...s.rect}
-                                                    fill={fill}
-                                                    fillOpacity={opacity}
-                                                    stroke={hc ? hc.foreground : undefined}
-                                                    strokeWidth={hc ? 1.5 : undefined}
-                                                    strokeDasharray={hc ? HC_DASH[bar.kind] : undefined}
-                                                />
-                                                {s.highlight && (
-                                                    <rect
-                                                        className="wf-bar-highlight"
-                                                        {...s.highlight}
-                                                        fill={hc ? hc.foreground : s.segment.color}
-                                                        fillOpacity={alpha < 1 ? alpha : undefined}
-                                                        pointerEvents="none"
-                                                    />
+                                                {hatchId && (
+                                                    <defs>
+                                                        <pattern
+                                                            id={hatchId}
+                                                            width={5}
+                                                            height={5}
+                                                            patternUnits="userSpaceOnUse"
+                                                            patternTransform="rotate(45)"
+                                                        >
+                                                            <rect width={5} height={5} fill={paint!.fill} />
+                                                            <line x1={0} y1={0} x2={0} y2={5} stroke={s.segment.color} strokeWidth={2.4} />
+                                                        </pattern>
+                                                    </defs>
                                                 )}
+                                                {barShape(s.rect, s.corner, {
+                                                    className: "wf-bar-rect",
+                                                    fill,
+                                                    fillOpacity: opacity,
+                                                    stroke: hc ? hc.foreground : (paint?.stroke ?? undefined),
+                                                    // 選んでいないときは枠も塗りと同じだけ薄める
+                                                    strokeOpacity: paint?.stroke ? opacity : undefined,
+                                                    strokeWidth: hc ? 1.5 : paint?.stroke ? 1.5 : undefined,
+                                                    strokeDasharray: hc ? HC_DASH[bar.kind] : (paint?.dash ?? undefined),
+                                                })}
+                                                {s.highlight &&
+                                                    barShape(s.highlight, s.highlightCorner, {
+                                                        className: "wf-bar-highlight",
+                                                        // 小計のハイライトも、小計と同じ見せ方で描く（枠だけ・斜線・点線の枠）
+                                                        fill: hc ? hc.foreground : paint ? fill : s.segment.color,
+                                                        fillOpacity: alpha < 1 ? alpha : undefined,
+                                                        stroke: paint?.stroke ?? undefined,
+                                                        strokeWidth: paint?.stroke ? 1.5 : undefined,
+                                                        strokeDasharray: paint?.dash ?? undefined,
+                                                        pointerEvents: "none",
+                                                    })}
                                             </React.Fragment>
                                         );
                                     })}
@@ -272,6 +298,20 @@ export const App: React.FC<AppProps> = ({
                                 </g>
                             );
                         })}
+
+                        {/* 接続線は棒の上に描く（標準と同じ）。線は棒の端に乗るので、棒の後ろに描くと半分が隠れて細く見えた（1.11.8.0 まで） */}
+                        {style.connectors.show &&
+                            layout.connectors.map((c, i) => (
+                                <line
+                                    key={`connector-${i}`}
+                                    className="wf-connector"
+                                    {...lineProps(c)}
+                                    stroke={style.connectors.color}
+                                    strokeWidth={style.connectors.width}
+                                    strokeDasharray={style.connectors.dash ?? undefined}
+                                    pointerEvents="none"
+                                />
+                            ))}
 
                         {layout.breaks.map((br, i) => (
                             // 切った印。背景の色の隙間と、その両側の細い線（目立たせない。濃い縁取りは使わない）
@@ -345,6 +385,7 @@ export const App: React.FC<AppProps> = ({
             {/* スクロールしないもの。凡例のほかはマウスを通す */}
             <svg className="wf-overlay" width={viewport.width} height={viewport.height} pointerEvents="none">
                 {layout.badge && <Text layout={layout.badge} className="wf-unit" />}
+                {layout.drillPath && <Text layout={layout.drillPath} className="wf-drill-path" title={layout.drillPath.title} hover />}
                 {layout.ticks.map((t, i) => (
                     <Text key={`tick-${i}`} layout={t} className="wf-tick" />
                 ))}
@@ -389,15 +430,29 @@ export const App: React.FC<AppProps> = ({
                                             strokeDasharray={item.line.dash ?? undefined}
                                         />
                                     ) : (
-                                        <rect
-                                            x={x}
-                                            y={y}
-                                            width={swatchWidth}
-                                            height={10}
-                                            fill={hc ? (item.kind === BAR_KINDS.total ? hc.foreground : hc.background) : item.color}
-                                            stroke={hc ? hc.foreground : undefined}
-                                            strokeDasharray={hc && item.kind !== "series" && item.kind !== "target" ? HC_DASH[item.kind as BarKind] : undefined}
-                                        />
+                                        // 棒に角丸があれば、印も値の向きの端（縦向きは上、横向きは右）を丸める（棒グラフと同じ）
+                                        barShape(
+                                            { x, y, width: swatchWidth, height: 10 },
+                                            style.columns.cornerRadius > 0
+                                                ? {
+                                                      // 合計は値の端だけ（範囲の反転では逆の端）、浮いた増減は両端（棒と同じ）
+                                                      sides:
+                                                          style.orientation === "horizontal"
+                                                              ? item.kind === BAR_KINDS.total
+                                                                  ? [style.valueAxis.invert ? "left" : "right"]
+                                                                  : ["left", "right"]
+                                                              : item.kind === BAR_KINDS.total
+                                                                ? [style.valueAxis.invert ? "bottom" : "top"]
+                                                                : ["top", "bottom"],
+                                                      radius: Math.min(style.columns.cornerRadius, 10 / 3),
+                                                  }
+                                                : null,
+                                            {
+                                                fill: hc ? (item.kind === BAR_KINDS.total ? hc.foreground : hc.background) : item.color,
+                                                stroke: hc ? hc.foreground : undefined,
+                                                strokeDasharray: hc && item.kind !== "series" && item.kind !== "target" ? HC_DASH[item.kind as BarKind] : undefined,
+                                            }
+                                        )
                                     )}
                                     <text
                                         x={x + swatchWidth + 4}

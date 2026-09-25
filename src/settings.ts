@@ -109,16 +109,31 @@ export const LINE_STYLE_ITEMS: powerbi.IEnumMember[] = [
     { value: LINE_STYLES.dotted, displayName: "点線" },
 ];
 
-/** 軸を切った印。slash = 斜線（既定）、wave = 波線 */
-export const BREAK_STYLES = { slash: "slash", wave: "wave" } as const;
+/** 軸を切った印。slash = 斜線（既定）、wave = 波線、none = 描かない（標準と同じく省くだけ） */
+export const BREAK_STYLES = { slash: "slash", wave: "wave", none: "none" } as const;
 export type BreakStyle = (typeof BREAK_STYLES)[keyof typeof BREAK_STYLES];
 
 export const BREAK_STYLE_ITEMS: powerbi.IEnumMember[] = [
     { value: BREAK_STYLES.slash, displayName: "斜線" },
     { value: BREAK_STYLES.wave, displayName: "波線" },
+    { value: BREAK_STYLES.none, displayName: "なし" },
 ];
 
-/** 凡例の位置。棒グラフ（visuals/barChart）と同じ値で、標準の「位置」と同じ 12 通り。既定は上詰め (左) */
+/**
+ * 比べる形の小計（計画からその段階までの差）の見せ方。色はどれも差の色（増加・減少）。
+ * ふつうの増減の棒と見分けられるように、既定は枠だけ（2026-09-24 ユーザー決定。1.11 までは透かす形だけ）
+ */
+export const SUBTOTAL_STYLES = { outline: "outline", fill: "fill", hatch: "hatch", dashed: "dashed" } as const;
+export type SubtotalStyle = (typeof SUBTOTAL_STYLES)[keyof typeof SUBTOTAL_STYLES];
+
+export const SUBTOTAL_STYLE_ITEMS: powerbi.IEnumMember[] = [
+    { value: SUBTOTAL_STYLES.outline, displayName: "枠だけ" },
+    { value: SUBTOTAL_STYLES.fill, displayName: "透かす" },
+    { value: SUBTOTAL_STYLES.hatch, displayName: "斜線" },
+    { value: SUBTOTAL_STYLES.dashed, displayName: "点線の枠" },
+];
+
+/** 凡例を描く位置（辺と寄せ）。保存値は下の LEGEND_POSITION_ITEMS（標準と同じ値）で、ここへ読み替える */
 export const LEGEND_POSITIONS = {
     topLeft: "topLeft",
     topCenter: "topCenter",
@@ -135,20 +150,53 @@ export const LEGEND_POSITIONS = {
 } as const;
 export type LegendPosition = (typeof LEGEND_POSITIONS)[keyof typeof LEGEND_POSITIONS];
 
+/**
+ * 凡例の位置の保存値は、標準のビジュアルとレポートテーマと同じ値（Top・Bottom など）にする。
+ * 基本テーマ（Fluent 2 は "Bottom"）やカスタムテーマの値がそのまま届く。左下・右下は標準に無いので独自の値。
+ * 棒グラフ（visuals/barChart）と同じ値
+ */
+const LEGEND_POSITION_PLACEMENTS: Record<string, LegendPosition> = {
+    Top: LEGEND_POSITIONS.topLeft,
+    TopCenter: LEGEND_POSITIONS.topCenter,
+    TopRight: LEGEND_POSITIONS.topRight,
+    Bottom: LEGEND_POSITIONS.bottomLeft,
+    BottomCenter: LEGEND_POSITIONS.bottomCenter,
+    BottomRight: LEGEND_POSITIONS.bottomRight,
+    Left: LEGEND_POSITIONS.leftTop,
+    LeftCenter: LEGEND_POSITIONS.leftCenter,
+    LeftBottom: LEGEND_POSITIONS.leftBottom,
+    Right: LEGEND_POSITIONS.rightTop,
+    RightCenter: LEGEND_POSITIONS.rightCenter,
+    RightBottom: LEGEND_POSITIONS.rightBottom,
+};
+
+/** 12 通り。既定は上詰め (左) */
 export const LEGEND_POSITION_ITEMS: powerbi.IEnumMember[] = [
-    { value: LEGEND_POSITIONS.topLeft, displayName: "上詰め (左)" },
-    { value: LEGEND_POSITIONS.topCenter, displayName: "上詰め (中央)" },
-    { value: LEGEND_POSITIONS.topRight, displayName: "上詰め (右)" },
-    { value: LEGEND_POSITIONS.bottomLeft, displayName: "下詰め (左)" },
-    { value: LEGEND_POSITIONS.bottomCenter, displayName: "下詰め (中央)" },
-    { value: LEGEND_POSITIONS.bottomRight, displayName: "下詰め (右)" },
-    { value: LEGEND_POSITIONS.leftTop, displayName: "左上" },
-    { value: LEGEND_POSITIONS.leftCenter, displayName: "左中央" },
-    { value: LEGEND_POSITIONS.leftBottom, displayName: "左下" },
-    { value: LEGEND_POSITIONS.rightTop, displayName: "右上" },
-    { value: LEGEND_POSITIONS.rightCenter, displayName: "右中央" },
-    { value: LEGEND_POSITIONS.rightBottom, displayName: "右下" },
+    { value: "Top", displayName: "上詰め (左)" },
+    { value: "TopCenter", displayName: "上詰め (中央)" },
+    { value: "TopRight", displayName: "上詰め (右)" },
+    { value: "Bottom", displayName: "下詰め (左)" },
+    { value: "BottomCenter", displayName: "下詰め (中央)" },
+    { value: "BottomRight", displayName: "下詰め (右)" },
+    { value: "Left", displayName: "左上" },
+    { value: "LeftCenter", displayName: "左中央" },
+    { value: "LeftBottom", displayName: "左下" },
+    { value: "Right", displayName: "右上" },
+    { value: "RightCenter", displayName: "右中央" },
+    { value: "RightBottom", displayName: "右下" },
 ];
+
+/** 保存値を標準の値にする。1.9 までの保存値（topLeft など）も読み替える。知らない値は undefined */
+export function standardLegendPosition(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    if (value in LEGEND_POSITION_PLACEMENTS) return value;
+    return Object.keys(LEGEND_POSITION_PLACEMENTS).find((k) => LEGEND_POSITION_PLACEMENTS[k] === value);
+}
+
+/** 保存値を、描画で使う位置（topLeft など）にする。知らない値は上詰め (左) */
+export function legendPlacementValue(value: unknown): LegendPosition {
+    return LEGEND_POSITION_PLACEMENTS[standardLegendPosition(value) ?? "Top"];
+}
 
 /** 軸のタイトルの出し方。棒グラフと同じ値 */
 export const TITLE_STYLES = { showTitleOnly: "showTitleOnly", showUnitOnly: "showUnitOnly", showBoth: "showBoth" } as const;
@@ -189,6 +237,14 @@ export const LABEL_UNIT_TYPES: powerbi.IEnumMember[] = [{ value: "auto", display
 
 /** 既定のフォント。レポートのテーマに合わせるのが基本なので Power BI 標準と同じ並びを初期値にする */
 export const DEFAULT_FONT_FAMILY = '"Segoe UI", wf_segoe-ui_normal, helvetica, arial, sans-serif';
+
+/**
+ * 軸のタイトル・凡例の文字の既定。標準のウォーターフォール（と棒グラフ）と同じ DIN 12・10（2026-09-23 に Desktop で並べて確認）。
+ * 1.8.0.0 までは 9・8 で、標準より小さかった
+ */
+export const AXIS_TITLE_FONT_FAMILY = "DIN";
+export const AXIS_TITLE_FONT_SIZE = 12;
+export const LEGEND_FONT_SIZE = 10;
 
 /**
  * 比較の列の値（イベント）がまだ届いていないときの選択肢。update() のたびに applyData で差し替える。
@@ -234,12 +290,12 @@ export class AutoNumUpDown extends formattingSettings.NumUpDown {
  * フォント（種類・サイズ・B/I/U）。子のスライスの name が capabilities のプロパティになる。
  * prefix を付けると titleFontFamily のように前に付く（同じカードに 2 つ置くとき）
  */
-function fontControl(prefix: string, displayName: string, size: number, bold = false): formattingSettings.FontControl {
+function fontControl(prefix: string, displayName: string, size: number, bold = false, family = DEFAULT_FONT_FAMILY): formattingSettings.FontControl {
     const n = (suffix: string) => (prefix ? `${prefix}${suffix}` : suffix[0].toLowerCase() + suffix.slice(1));
     return new formattingSettings.FontControl({
         name: `${prefix || "font"}Control`,
         displayName,
-        fontFamily: new formattingSettings.FontPicker({ name: n("FontFamily"), displayName: "フォント", value: DEFAULT_FONT_FAMILY }),
+        fontFamily: new formattingSettings.FontPicker({ name: n("FontFamily"), displayName: "フォント", value: family }),
         fontSize: new formattingSettings.NumUpDown({ name: n("FontSize"), displayName: "文字サイズ", value: size }),
         bold: new formattingSettings.ToggleSwitch({ name: n("Bold"), displayName: "太字", value: bold }),
         italic: new formattingSettings.ToggleSwitch({ name: n("Italic"), displayName: "斜体", value: false }),
@@ -311,6 +367,14 @@ export class LayoutCardSettings extends SimpleCard {
         placeholder: DEFAULT_TOTAL_LABEL,
     });
 
+    /** ドリルダウンしたとき、今いる位置（事業A ＞ 製品A1 など）を左上に出す（2026-09-25 ユーザー）。標準に無い項目 */
+    drillPathShow = new formattingSettings.ToggleSwitch({
+        name: "drillPathShow",
+        displayName: "ドリルの位置",
+        description: "ドリルダウンや絞り込みで、表示している項目の上の階層が 1 つに決まるとき、その位置（事業A ＞ 製品A1 など）を左上に出す",
+        value: true,
+    });
+
     slices = [
         this.orientation,
         this.connectMode,
@@ -320,6 +384,7 @@ export class LayoutCardSettings extends SimpleCard {
         this.originMode,
         this.totalShow,
         this.totalLabel,
+        this.drillPathShow,
     ];
 
     /**
@@ -437,6 +502,15 @@ export class ColumnsCardSettings extends CompositeCard {
         value: 50,
     });
 
+    /** 比べる形の小計の見せ方。透過性は「透かす」のときだけ出す */
+    subtotalStyle = new formattingSettings.ItemDropdown({
+        name: "subtotalStyle",
+        displayName: "小計の見せ方",
+        description: "比べる形で小計を挟んだときの、浮いた小計の棒。ふつうの増減の棒と見分けやすいように描き分ける",
+        items: SUBTOTAL_STYLE_ITEMS,
+        value: SUBTOTAL_STYLE_ITEMS[0],
+    });
+
     othersFill = new formattingSettings.ColorPicker({
         name: "othersFill",
         displayName: "その他",
@@ -456,16 +530,26 @@ export class ColumnsCardSettings extends CompositeCard {
         value: 20,
     });
 
+    /**
+     * 棒の角丸（棒グラフと同じ名前・既定 0）。棒の端を丸め、値 0 の軸に乗っている端だけ四角にする（合計は値の端だけ、浮いた増減・小計は両端）。
+     * 素の numeric なので options を付けない。viewModel で 0〜30 にクランプする
+     */
+    cornerRadius = new formattingSettings.NumUpDown({
+        name: "cornerRadius",
+        displayName: "角丸 (px)",
+        value: 0,
+    });
+
     colorGroup = new Group({
         name: "columnsColor",
         displayName: "色",
-        slices: [this.increaseFill, this.decreaseFill, this.totalFill, this.othersFill, this.subtotalTransparency],
+        slices: [this.increaseFill, this.decreaseFill, this.totalFill, this.othersFill, this.subtotalStyle, this.subtotalTransparency],
     });
 
     layoutGroup = new Group({
         name: "columnsLayout",
         displayName: "レイアウト",
-        slices: [this.outerPadding, this.categorySpacing],
+        slices: [this.outerPadding, this.categorySpacing, this.cornerRadius],
     });
 
     /**
@@ -525,7 +609,7 @@ export class LegendCardSettings extends CompositeCard {
         value: LEGEND_POSITION_ITEMS[0],
     });
 
-    font = fontControl("", "フォント", 8);
+    font = fontControl("", "フォント", LEGEND_FONT_SIZE);
 
     labelColor = new formattingSettings.ColorPicker({
         name: "labelColor",
@@ -848,10 +932,11 @@ export class CategoryAxisCardSettings extends CompositeCard {
         value: 25,
     });
 
+    /** カテゴリの軸のタイトルは初期オフ（2026-09-23 決定）。縦横どちらの向きでもこの card に当てる。数値の軸は初期オンのまま */
     titleShow = new formattingSettings.ToggleSwitch({
         name: "titleShow",
         displayName: "タイトル",
-        value: true,
+        value: false,
     });
 
     titleText = new formattingSettings.TextInput({
@@ -868,7 +953,7 @@ export class CategoryAxisCardSettings extends CompositeCard {
         value: TITLE_STYLE_ITEMS[0],
     });
 
-    titleFont = fontControl("title", "フォント", 9);
+    titleFont = fontControl("title", "フォント", AXIS_TITLE_FONT_SIZE, false, AXIS_TITLE_FONT_FAMILY);
 
     titleColor = new formattingSettings.ColorPicker({
         name: "titleColor",
@@ -973,6 +1058,15 @@ export class ValueAxisCardSettings extends CompositeCard {
         value: true,
     });
 
+    /** 目盛り（グリッド線）の本数の目安（棒グラフと同じ）。空なら自動（描く範囲の長さで決める） */
+    tickCount = new formattingSettings.TextInput({
+        name: "tickCount",
+        displayName: "目盛りの本数 (目安)",
+        description: "空なら自動。数を入れると、その本数以内で切りのいい目盛りにする（数字が重なるなら間引く）",
+        value: "",
+        placeholder: "自動",
+    });
+
     show = new formattingSettings.ToggleSwitch({
         name: "show",
         displayName: "値",
@@ -1035,7 +1129,7 @@ export class ValueAxisCardSettings extends CompositeCard {
         value: TITLE_STYLE_ITEMS[0],
     });
 
-    titleFont = fontControl("title", "フォント", 9);
+    titleFont = fontControl("title", "フォント", AXIS_TITLE_FONT_SIZE, false, AXIS_TITLE_FONT_FAMILY);
 
     titleColor = new formattingSettings.ColorPicker({
         name: "titleColor",
@@ -1059,7 +1153,7 @@ export class ValueAxisCardSettings extends CompositeCard {
     rangeGroup = new Group({
         name: "valueRange",
         displayName: "範囲",
-        slices: [this.start, this.end, this.startAtZero, this.breakStyle, this.invertRange, this.roundRange],
+        slices: [this.start, this.end, this.startAtZero, this.breakStyle, this.invertRange, this.roundRange, this.tickCount],
     });
 
     valuesGroup = new Group({
@@ -1184,6 +1278,53 @@ export class VisualFormattingSettingsModel extends Model {
     ];
 
     /**
+     * 基本テーマ・カスタムテーマに合わせる（棒グラフと同じ）。テーマは標準のビジュアルの名前（showAxisTitle・showTitle）で
+     * 値を持つので、capabilities にその名前も置いて受け取り、作り手が自作の設定（titleShow）を保存していないときの既定にする。
+     * 書式ペインにも同じ値を出す。populate の直後に呼ぶ。凡例の位置は 1.9 までの保存値（topLeft など）を標準の値に読み替える
+     */
+    applyThemeDefaults(objects: powerbi.DataViewObjects | undefined): void {
+        const raw = (card: string, prop: string): unknown => objects?.[card]?.[prop];
+        const inherit = (slice: formattingSettings.ToggleSwitch, card: string, own: string, standard: string) => {
+            const themeValue = raw(card, standard);
+            if (raw(card, own) == null && typeof themeValue === "boolean") slice.value = themeValue;
+        };
+        inherit(this.categoryAxis.titleShow, "categoryAxis", "titleShow", "showAxisTitle");
+        inherit(this.valueAxis.titleShow, "valueAxis", "titleShow", "showAxisTitle");
+        inherit(this.legend.titleShow, "legend", "titleShow", "showTitle");
+        const position = standardLegendPosition(raw("legend", "position"));
+        if (position) this.legend.position.value = LEGEND_POSITION_ITEMS.find((i) => i.value === position)!;
+
+        // 項目名の欄の上限：標準は categoryAxis の maxMarginFactor で持つ（Fluent 2 は 50）。描画と同じ 5〜100 に丸める
+        const marginFactor = raw("categoryAxis", "maxMarginFactor");
+        if (raw("categoryAxis", "maxHeight") == null && typeof marginFactor === "number") {
+            this.categoryAxis.maxHeight.value = Math.max(5, Math.min(100, marginFactor));
+        }
+
+        // グリッド線：標準は数値の軸のカードの中（gridlineShow・gridlineColor・gridlineStyle・gridlineThickness）。
+        // 自作の「グリッド線」カードは数値の軸の線だけ（horizontal*、横向きでも数値の軸の線）
+        const own = (prop: string) => raw("gridlines", `horizontal${prop}`) != null;
+        const show = raw("valueAxis", "gridlineShow");
+        if (!own("Show") && typeof show === "boolean") this.gridlines.horizontalShow.value = show;
+        const color = (raw("valueAxis", "gridlineColor") as powerbi.Fill | undefined)?.solid?.color;
+        if (!own("Color") && typeof color === "string" && color) this.gridlines.horizontalColor.value = { value: color };
+        const style = LINE_STYLE_ITEMS.find((i) => i.value === raw("valueAxis", "gridlineStyle"));
+        if (!own("Style") && style) this.gridlines.horizontalStyle.value = style;
+        const thickness = raw("valueAxis", "gridlineThickness");
+        // 描画と同じ 0.5〜10 に丸める（書式ペインの値と描画の幅をずらさない）
+        if (!own("Width") && typeof thickness === "number" && thickness > 0) this.gridlines.horizontalWidth.value = Math.max(0.5, Math.min(10, thickness));
+
+        // 合計・小計の文字（太字）は標準に項目が無く、テーマの文字の大きさ・フォントが届かない。変えていなければ、ふつうの文字と
+        // 同じにする（Fluent 2 は項目名を 10.5 にするので、1.11.1.0 までは合計・小計の名前だけ 9 のまま小さく見えた）
+        for (const [card, fonts] of [
+            ["categoryAxis", this.categoryAxis],
+            ["dataLabels", this.dataLabels],
+        ] as const) {
+            if (raw(card, "totalFontSize") == null) fonts.totalFont.fontSize.value = fonts.font.fontSize.value;
+            if (raw(card, "totalFontFamily") == null) fonts.totalFont.fontFamily.value = fonts.font.fontFamily.value;
+        }
+    }
+
+    /**
      * データ次第の中身を流し込む。凡例に列が無ければ凡例の色を、目標が無ければ目標のカードを隠す。
      * 横向きでは、項目の軸が縦（Y 軸）、値の軸が横（X 軸）になる（標準の横棒と同じ呼び方）
      */
@@ -1191,7 +1332,8 @@ export class VisualFormattingSettingsModel extends Model {
         this.layout.applyEvents(data.events, data.leftEvent, data.rightEvent, data.hasOrigin);
         this.columns.applySeries(data.seriesTargets);
         this.target.visible = data.hasTarget;
-        this.columns.subtotalTransparency.visible = data.subtotalDiff;
+        this.columns.subtotalStyle.visible = data.subtotalDiff;
+        this.columns.subtotalTransparency.visible = data.subtotalDiff && this.columns.subtotalStyle.value?.value === SUBTOTAL_STYLES.fill;
         this.categoryAxis.displayName = data.horizontal ? "Y 軸" : "X 軸";
         this.valueAxis.displayName = data.horizontal ? "X 軸" : "Y 軸";
         this.categoryAxis.maxHeight.displayName = data.horizontal ? "幅の最大値 (%)" : "高さの最大値 (%)";

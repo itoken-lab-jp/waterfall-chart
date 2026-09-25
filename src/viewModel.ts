@@ -32,15 +32,17 @@ import {
     DataDrivenFormat,
     LABEL_ORIENTATIONS,
     LABEL_POSITIONS,
-    LEGEND_POSITIONS,
     TITLE_STYLES,
     LINE_STYLES,
     LegendPosition,
+    legendPlacementValue,
     ORDERS,
     ORIENTATIONS,
     ORIGIN_MODES,
     Orientation,
     RATE_TYPES,
+    SUBTOTAL_STYLES,
+    SubtotalStyle,
     VisualFormattingSettingsModel,
     dropdownValue,
 } from "./settings";
@@ -145,6 +147,8 @@ export interface AxisInfo {
      * top = 軸の最大が 0 より小さい（負の合計の棒の根元を切った）、none = 0 が軸に入っている
      */
     cut: "none" | "bottom" | "top";
+    /** 目盛りの本数を決め直す（範囲は変えない）。標準と同じく、描く範囲の長さで本数の上限を決めるために、長さが決まった後で呼ぶ */
+    ticksFor?: (count: number) => Tick[];
 }
 
 export interface LegendItem {
@@ -223,11 +227,15 @@ export interface ViewStyle {
         minCategoryWidth: number;
         title: AxisTitle | null;
     };
-    valueAxis: { show: boolean; font: TextStyle; switchPosition: boolean; invert: boolean; title: AxisTitle | null };
+    /** tickCount：目盛りの本数の目安。0 なら自動（描く範囲の長さで決める） */
+    valueAxis: { show: boolean; font: TextStyle; switchPosition: boolean; invert: boolean; title: AxisTitle | null; tickCount: number };
     gridlines: { show: boolean; color: string; opacity: number; width: number; dash: string | null };
     legend: { show: boolean; position: LegendPosition; font: TextStyle; title: string };
-    columns: { categorySpacing: number; outerPadding: number | null };
-    /** 小計（比べる形）の棒の濃さ（1 − 透過性）。ハイコントラストでは 1（ほかの棒と同じ） */
+    /** cornerRadius：棒の角丸（px）。0 なら丸めない */
+    columns: { categorySpacing: number; outerPadding: number | null; cornerRadius: number };
+    /** 小計（比べる形）の見せ方。透かすときの濃さは subtotalOpacity */
+    subtotalStyle: SubtotalStyle;
+    /** 小計（比べる形）の棒の濃さ（1 − 透過性）。「透かす」のときだけ 1 未満。ハイコントラストでは 1（ほかの棒と同じ） */
     subtotalOpacity: number;
     /** 軸を切った印の塗り（背景と同じ色） */
     background: string;
@@ -250,6 +258,8 @@ export interface ViewModel {
     axis: AxisInfo;
     /** 値の軸の単位（(百万円) など）。出さないときは空 */
     unitBadge: string;
+    /** ドリルダウンした位置（「事業A ＞ 製品A1」）。ドリルしていない・出さないときは空 */
+    drillPath: string;
     legend: LegendItem[];
     target: TargetLine | null;
     /** 定数線（固定の値）。出さなければ null */
@@ -295,6 +305,9 @@ export function dashOf(style: string, width: number): string | null {
     if (style === LINE_STYLES.dotted) return `${Math.max(1, width)} ${Math.max(2, width * 2)}`;
     return null;
 }
+
+/** ドリルダウンした位置の区切り */
+export const DRILL_PATH_SEPARATOR = " ＞ ";
 
 const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, value));
 /** 数でなければ fallback（0 は 0 のまま） */
@@ -343,14 +356,18 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
     const labels = settings.dataLabels;
     const gridWidth = clamp(Number(settings.gridlines.horizontalWidth.value) || 1, 0.5, 10);
     const outerPadding = settings.columns.outerPadding.value;
-    const legendPosition = dropdownValue(settings.legend.position, LEGEND_POSITIONS.topLeft);
+    const subtotalValue = dropdownValue(settings.columns.subtotalStyle, SUBTOTAL_STYLES.outline);
+    const subtotalStyle: SubtotalStyle = (Object.values(SUBTOTAL_STYLES) as string[]).includes(subtotalValue)
+        ? (subtotalValue as SubtotalStyle)
+        : SUBTOTAL_STYLES.outline;
     return {
         orientation:
             dropdownValue(settings.layout.orientation, ORIENTATIONS.vertical) === ORIENTATIONS.horizontal
                 ? ORIENTATIONS.horizontal
                 : ORIENTATIONS.vertical,
-        breakStyle:
-            dropdownValue(settings.valueAxis.breakStyle, BREAK_STYLES.slash) === BREAK_STYLES.wave ? BREAK_STYLES.wave : BREAK_STYLES.slash,
+        breakStyle: ((value) => (value === BREAK_STYLES.wave || value === BREAK_STYLES.none ? value : BREAK_STYLES.slash))(
+            dropdownValue(settings.valueAxis.breakStyle, BREAK_STYLES.slash)
+        ),
         connectors: {
             show: settings.connectors.show.value ?? true,
             color: ink(colorOf(settings.connectors.color) || palette.foregroundNeutralTertiary?.value || "#A19F9D"),
@@ -390,6 +407,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
             switchPosition: settings.valueAxis.switchPosition.value ?? false,
             invert: settings.valueAxis.invertRange.value ?? false,
             title: null,
+            tickCount: tickCountOf(settings.valueAxis.tickCount.value),
         },
         gridlines: {
             show: settings.gridlines.horizontalShow.value ?? true,
@@ -404,17 +422,21 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
         },
         legend: {
             show: settings.legend.show.value ?? true,
-            position: ((Object.values(LEGEND_POSITIONS) as string[]).includes(legendPosition)
-                ? legendPosition
-                : LEGEND_POSITIONS.topLeft) as LegendPosition,
+            position: legendPlacementValue(settings.legend.position.value?.value),
             font: fontOf(settings.legend.font, ink(colorOf(settings.legend.labelColor) || "#605E5C")),
             title: "",
         },
         columns: {
             categorySpacing: clamp(Number(settings.columns.categorySpacing.value ?? 20), 0, 50),
             outerPadding: typeof outerPadding === "number" && Number.isFinite(outerPadding) ? clamp(outerPadding, 0, 100) : null,
+            // 棒グラフと同じく 0〜30
+            cornerRadius: clamp(finiteOr(settings.columns.cornerRadius.value, 0), 0, 30),
         },
-        subtotalOpacity: hc ? 1 : 1 - clamp(finiteOr(settings.columns.subtotalTransparency.value, DEFAULT_SUBTOTAL_TRANSPARENCY), 0, 100) / 100,
+        subtotalStyle,
+        subtotalOpacity:
+            hc || subtotalStyle !== SUBTOTAL_STYLES.fill
+                ? 1
+                : 1 - clamp(finiteOr(settings.columns.subtotalTransparency.value, DEFAULT_SUBTOTAL_TRANSPARENCY), 0, 100) / 100,
         background: hc?.background ?? palette.background?.value ?? "#FFFFFF",
         highContrast: hc,
     };
@@ -443,6 +465,7 @@ function emptyOf(style: ViewStyle, message: string): ViewModel {
         rightEvent: "",
         axis: { min: 0, max: 1, ticks: [], cut: "none" },
         unitBadge: "",
+        drillPath: "",
         legend: [],
         target: null,
         constantLine: null,
@@ -466,8 +489,10 @@ interface Colors {
  */
 export function blend(color: string, toward: string, amount: number): string {
     const parse = (c: string) => {
-        const match = /^#([0-9a-f]{6})$/i.exec(c.trim());
-        return match ? parseInt(match[1], 16) : null;
+        // #RGB は #RRGGBB に広げて読む（背景が #FFF のときに混ぜられず、差の色がそのまま出ていた）
+        const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(c.trim());
+        const hex = short ? short.slice(1).map((d) => d + d).join("") : /^#([0-9a-f]{6})$/i.exec(c.trim())?.[1];
+        return hex ? parseInt(hex, 16) : null;
     };
     const from = parse(color);
     const to = parse(toward);
@@ -567,6 +592,28 @@ export function boundOf(text: string | undefined): number | null {
     return Number.isFinite(value) ? value : null;
 }
 
+/** 「目盛りの本数 (目安)」の入力を本数にする。空・数でない・1 以下は 0（自動）。多すぎる指定は 20 本まで（棒グラフと同じ） */
+export function tickCountOf(text: string | undefined): number {
+    // 全角の数字も読む（「５」など）
+    const ascii = String(text ?? "").trim().replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
+    const n = Math.round(Number(ascii));
+    return Number.isFinite(n) && n >= 2 ? Math.min(20, n) : 0;
+}
+
+/**
+ * 目盛りの値。本数が max を超えず、数字が同じ表示にならない（丸めで 0.005 と 0.01 がどちらも 0.01 になる、など）ように、
+ * d3 の ticks の目安を max から下げていく（ticks の引数は目安で、0〜4 に 3 を渡すと 5 本返る）。棒グラフと同じ
+ */
+export function ticksUpTo(domain: [number, number], max: number, labelsOf: (values: number[]) => string[]): number[] {
+    let values: number[] = [];
+    for (let count = Math.max(1, max); count >= 1; count--) {
+        values = scaleLinear().domain(domain).ticks(count);
+        const labels = labelsOf(values);
+        if (values.length <= max && new Set(labels).size === labels.length) return values;
+    }
+    return values;
+}
+
 /**
  * 軸の範囲。0 から描かないときは、増減が見やすいように合計の棒を切る。
  * 累計が 0 をまたぐときや、形 2 のように 0 から積むときは 0 が範囲に入るので切らない。
@@ -611,6 +658,8 @@ export function axisOf(bars: Bar[], options: AxisOptions, formatTick: (v: number
             .domain([min, max])
             .ticks(TICK_COUNT)
             .map((value) => ({ value, label: formatTick(value) })),
+        ticksFor: (count: number) =>
+            ticksUpTo([min, max], count, (values) => values.map(formatTick)).map((value) => ({ value, label: formatTick(value) })),
         cut,
     };
 }
@@ -802,6 +851,13 @@ export function transform(
         while (depth < maxDepth && withLevels.every((item) => item.levels[depth] === withLevels[0].levels[depth])) depth++;
         return depth;
     })();
+    /**
+     * ドリルダウンした位置。どの項目でも同じ上の階層の値を「＞」でつなぐ（事業A に入り、製品A1 に入ると「事業A ＞ 製品A1」）。
+     * ドリルしていない（上の階層が届かない）・「すべて展開」で親が混ざるときは空。
+     * ドリルと、絞り込みで親が 1 つに決まった「すべて展開」は区別しない（どちらも、表示している項目がその親の下にあることは正しい）
+     */
+    const drillPath =
+        commonDepth > 0 ? (items.find((item) => item.levels.length > 1)?.levels.slice(0, commonDepth).join(DRILL_PATH_SEPARATOR) ?? "") : "";
     const itemLabels = (item: ParsedItem) => {
         if (!item.levels.length) {
             const name = shape === SHAPES.compare ? DIFF_TEXT : sources[0].name;
@@ -967,7 +1023,7 @@ export function transform(
                 ]);
             } else if (section.name !== null && from !== null) {
                 // 比べる形の小計は、この区間の左端の合計からその段階までの差（浮いた棒）。
-                // 区切りの中だけの差にすると、名前（営業利益の差）と中身（販管費の差）がずれる（docs/waterfall.md の「小計」、#261）。
+                // 区切りの中だけの差にすると、名前（営業利益の差）と中身（販管費の差）がずれる（docs/waterfall.md の「小計」）。
                 // 左端・右端の値も、この区間の始まりからその段階までを積み上げた値（営業利益そのものの計画と実績）
                 // 名前は段階の名前そのもの（「営業利益」）。この形ではあいだの棒もすべて差なので、小計だけ「の差」を付けない
                 // （ユーザー、2026-09-20「～の差って入れるのやめない？」）。差であることは符号付きのラベルで分かる
@@ -1183,7 +1239,7 @@ export function transform(
         style.valueAxis.title = text ? { text, font: fontOf(axisSettings.titleFont, ink(colorOf(axisSettings.titleColor) || "#252423")) } : null;
     }
     const categorySettings = settings.categoryAxis;
-    if (categorySettings.titleShow.value ?? true) {
+    if (categorySettings.titleShow.value ?? false) {
         const text = titleOf(
             dropdownValue(categorySettings.titleStyle, TITLE_STYLES.showTitleOnly),
             (categorySettings.titleText.value ?? "").trim() || parsed.levelNames.slice(commonDepth).join(LEVEL_SEPARATOR),
@@ -1246,6 +1302,7 @@ export function transform(
         axis,
         unitBadge:
             (axisSettings.unitShow.value ?? true) && !unitInTitle ? unitBadgeOf(unit.unitWord, axisSettings.unitText.value ?? "") : "",
+        drillPath: (settings.layout.drillPathShow.value ?? true) ? drillPath : "",
         legend,
         target,
         constantLine,

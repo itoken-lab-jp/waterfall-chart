@@ -16,7 +16,7 @@ import powerbi from "powerbi-visuals-api";
 
 import { BAR_KINDS, Bar, LegendItem, Segment, TextStyle, TooltipItem, ViewModel, blend, extentOf } from "./viewModel";
 import { FontSpec, measureTextWidth, readableText, truncateStartToWidth, truncateToWidth } from "./unitUtils";
-import { LABEL_POSITIONS, ORIENTATIONS } from "./settings";
+import { BREAK_STYLES, LABEL_POSITIONS, ORIENTATIONS } from "./settings";
 import { LEVEL_SEPARATOR } from "./data";
 import { Candidate, LabelRequest, Obstacle, placeLabels } from "./placement";
 
@@ -41,6 +41,9 @@ const NOTICE_HEIGHT = 16;
  * ビジュアルはビューの外（上）には描いていない（.wf-container が viewport の大きさで overflow: hidden）
  */
 const TOP_MARGIN = 8;
+/** 下の凡例の上の隙間（px）。項目名・X 軸のタイトルと凡例をくっつけない（標準・棒グラフと同じくらい。1.11 まではなし） */
+const LEGEND_GAP_BOTTOM = 10;
+const legendGapBottom = (height: number) => Math.max(0, Math.min(LEGEND_GAP_BOTTOM, (height - 150) / 5));
 const LEGEND_SWATCH = 10;
 /** 凡例の線の印（目標の線）の長さ。破線・点線の模様が見える長さ */
 const LEGEND_LINE = 18;
@@ -76,11 +79,63 @@ export interface RenderFont {
     color: string;
 }
 
+/** 角を丸める端（画面の向き） */
+export type CornerSide = "top" | "bottom" | "left" | "right";
+
 export interface SegmentLayout {
     segment: Segment;
     rect: Rect;
     /** ハイライトの該当分。無ければ null */
     highlight: Rect | null;
+    /** 角を丸める端（1 つか、浮いた棒は両端）と半径。丸めなければ null */
+    corner: Corner | null;
+    /** ハイライトの該当分の角（区画と同じ端を、該当分の長さに収まる半径で丸める）。丸めなければ null */
+    highlightCorner: Corner | null;
+}
+
+export interface Corner {
+    sides: CornerSide[];
+    radius: number;
+}
+
+/**
+ * 棒（区画）の path。corner があれば、その端（sides）の角だけを丸める（棒グラフと同じ二次曲線）。
+ * corner が無い・半径が 0 なら長方形
+ */
+/** 実際に描く角の半径。棒の太さの半分と、長さ（両端を丸めるなら長さの半分）まで（棒グラフと同じ考え方）。丸めなければ 0 */
+export function cornerRadiusOf(r: Rect, corner: Corner | null): number {
+    if (!corner || !corner.sides.length) return 0;
+    const has = (side: CornerSide) => corner.sides.includes(side);
+    const alongHeight = (has("top") ? 1 : 0) + (has("bottom") ? 1 : 0);
+    const alongWidth = (has("left") ? 1 : 0) + (has("right") ? 1 : 0);
+    return Math.max(
+        0,
+        Math.min(
+            corner.radius,
+            alongHeight ? Math.min(r.width / 2, r.height / alongHeight) : Infinity,
+            alongWidth ? Math.min(r.height / 2, r.width / alongWidth) : Infinity
+        )
+    );
+}
+
+export function barPath(r: Rect, corner: Corner | null): string {
+    const { x, y, width: w, height: h } = r;
+    const has = (side: CornerSide) => corner?.sides.includes(side) ?? false;
+    const k = cornerRadiusOf(r, corner);
+    if (!corner || k <= 0) return `M ${x},${y} h ${w} v ${h} h ${-w} Z`;
+    const x2 = x + w;
+    const y2 = y + h;
+    // 角ごとの半径（左上から時計回り）。丸めない角は 0（二次曲線が点に縮む）
+    const tl = has("top") || has("left") ? k : 0;
+    const tr = has("top") || has("right") ? k : 0;
+    const br = has("bottom") || has("right") ? k : 0;
+    const bl = has("bottom") || has("left") ? k : 0;
+    return (
+        `M ${x + tl},${y} L ${x2 - tr},${y} Q ${x2},${y} ${x2},${y + tr} ` +
+        `L ${x2},${y2 - br} Q ${x2},${y2} ${x2 - br},${y2} ` +
+        `L ${x + bl},${y2} Q ${x},${y2} ${x},${y2 - bl} ` +
+        `L ${x},${y + tl} Q ${x},${y} ${x + tl},${y} Z`
+    );
 }
 
 export interface TextLayout {
@@ -157,6 +212,8 @@ export interface ChartLayout {
     valueTitle: TextLayout | null;
     categoryTitle: TextLayout | null;
     badge: TextLayout | null;
+    /** ドリルダウンした位置。ドリルしていない・出さないときは null */
+    drillPath: (TextLayout & { title: string }) | null;
     notice: { x: number; y: number } | null;
     /** 項目名を斜めにした（縦向きで入りきらない） */
     rotatedCategories: boolean;
@@ -266,6 +323,48 @@ const hitsBox = (a: Rect, b: Rect): boolean =>
 const asBox = (box: Rect): Obstacle => ({ kind: "box", box });
 
 /**
+ * 値の軸の目盛りの本数の上限。標準（powerbi-visuals-utils-chartutils の getRecommendedNumberOfTicksForYAxis・ForXAxis）と同じ。
+ * 縦の軸は高さ、横の軸は幅で決める
+ */
+export function recommendedTickCount(length: number, axis: "vertical" | "horizontal"): number {
+    const [small, medium] = axis === "vertical" ? [150, 300] : [300, 500];
+    return length < small ? 3 : length < medium ? 5 : 8;
+}
+
+/** 点線の枠の小計の地の濃さ（差の色を背景に混ぜる割合） */
+const SUBTOTAL_TINT = 0.15;
+
+/**
+ * 比べる形の小計の塗り方。color は差の色（増加・減少）。
+ * fill は棒の塗り（hatch のときは斜線の模様を App が敷く）、stroke・dash は枠、under は棒の中の見た目の色（ラベルの文字色を決める）
+ */
+export function subtotalPaint(
+    style: Pick<ViewModel["style"], "subtotalStyle" | "subtotalOpacity" | "background">,
+    color: string
+): { fill: string; fillOpacity: number; stroke: string | null; dash: string | null; hatch: boolean; under: string } {
+    const bg = style.background;
+    switch (style.subtotalStyle) {
+        case "fill":
+            return {
+                fill: color,
+                fillOpacity: style.subtotalOpacity,
+                stroke: null,
+                dash: null,
+                hatch: false,
+                under: style.subtotalOpacity < 1 ? blend(color, bg, 1 - style.subtotalOpacity) : color,
+            };
+        case "hatch":
+            return { fill: bg, fillOpacity: 1, stroke: color, dash: null, hatch: true, under: bg };
+        case "dashed": {
+            const tint = blend(color, bg, 1 - SUBTOTAL_TINT);
+            return { fill: tint, fillOpacity: 1, stroke: color, dash: "3 2", hatch: false, under: tint };
+        }
+        default:
+            return { fill: bg, fillOpacity: 1, stroke: color, dash: null, hatch: false, under: bg };
+    }
+}
+
+/**
  * 文字の外枠（画面の座標）。pad は四方に足す余白。回転は 0° と -90° だけ見る（ラベル・目標と定数線の名前）。
  * 高さは backgroundOf と同じ見積もり（上に 0.8 文字、下に 0.22 文字）
  */
@@ -305,6 +404,9 @@ export function layoutOf(viewModel: ViewModel, viewport: IViewport): ChartLayout
         if (!next) break;
         result = next;
     }
+    // 描く範囲が足りない・位置の文字が 1 文字も入らないときは、ドリルの位置をとらずに組み直す
+    // （位置の行のせいで図ごと消えない・空の位置で行の高さだけとらないように）
+    if (viewModel.drillPath && !result?.layout.drillPath) return layoutOf({ ...viewModel, drillPath: "" }, viewport);
     return result?.layout ?? null;
 }
 
@@ -358,18 +460,30 @@ function layoutWith(
     const legendColumnWidth = legendShown
         ? Math.min(W * 0.3, Math.max(legendTitleWidth, ...viewModel.legend.map(itemWidth)) + 8)
         : 0;
+    // ドリルダウンした位置。縦向きで単位のラベルを出すときは、その行（描く範囲の上）に並べて行を足さない
+    // （2026-09-25 ユーザー「縦に積むとグラフエリアが狭くなる」）。横向き（単位は右下）・単位を出さないときは、上の凡例の下に 1 行とる
+    const drillPathFont = renderFontOf(style.categoryAxis.font);
+    const badgeShown = Boolean(viewModel.unitBadge) && style.valueAxis.show;
+    const pathSharesBadgeRow = Boolean(viewModel.drillPath) && !horizontal && badgeShown;
+    // 行の高さは、文字の下側（0.22 文字、boxOf と同じ見積もり）まで収まるようにとる（大きいフォントでも下の物に掛けない）
+    const drillPathRow = viewModel.drillPath && !pathSharesBadgeRow ? Math.ceil(drillPathFont.size * 1.3) + 6 : 0;
     const reserve = {
-        top: TOP_MARGIN + (legendShown && placement.side === "top" ? legendRow : 0),
-        bottom: legendShown && placement.side === "bottom" ? legendRow : 0,
+        top: TOP_MARGIN + (legendShown && placement.side === "top" ? legendRow : 0) + drillPathRow,
+        // 低いビジュアルでは隙間を縮める（高さ 200px 以上で 10px、150px 以下で 0）。描く範囲が 10px を切ると図ごと消えるため
+        bottom: legendShown && placement.side === "bottom" ? legendRow + legendGapBottom(H) : 0,
         left: legendShown && placement.side === "left" ? legendColumnWidth : 0,
         right: legendShown && placement.side === "right" ? legendColumnWidth : 0,
     };
     const noticeHeight = viewModel.notice ? NOTICE_HEIGHT : 0;
-    const badgeHeight = viewModel.unitBadge && style.valueAxis.show ? tickFont.size + 6 : 0;
+    // 単位のラベルの行。ドリルの位置を並べるときは、大きいほうの文字に合わせる（文字の下側まで収める）
+    const badgeRowFont = pathSharesBadgeRow ? Math.max(tickFont.size, drillPathFont.size) : tickFont.size;
+    // 並べないときは 1.11.18 までと同じ高さ（ドリルしていないときの見た目を変えない）
+    const badgeHeight = !badgeShown ? 0 : pathSharesBadgeRow ? badgeRowFont + Math.max(6, Math.ceil(badgeRowFont * 0.22) + 2) : tickFont.size + 6;
     const referenceLabelRoom = viewModel.target?.label || viewModel.constantLine?.label ? labelFont.size + 6 : 0;
 
     const tickLabelWidth = style.valueAxis.show
-        ? Math.max(0, ...axis.ticks.map((t) => measureTextWidth(t.label, specOf(tickFont))))
+        ? // 目盛りの本数は描く範囲の長さで決まる（下の axisTicks）。いちばん細かい 8 本の数字の幅も見積もりに入れる
+          Math.max(0, ...[...axis.ticks, ...(axis.ticksFor?.(Math.max(8, style.valueAxis.tickCount)) ?? [])].map((t) => measureTextWidth(t.label, specOf(tickFont))))
         : 0;
     const labelTextOf = (b: Bar) => (b.rateText ? `${b.labelText} (${b.rateText})` : b.labelText);
     const valueLabelWidth = style.dataLabels.show
@@ -390,6 +504,8 @@ function layoutWith(
     let categoryTexts: Array<{ lines: string[]; title: string }>;
     let scrollAxis: "x" | "y" | null = null;
     let content: number;
+    /** スクロール する中身の先頭の余白。斜めの項目名の左側が、中身の左端で切れないように空ける */
+    let leadIn = 0;
     /** 縦向きの項目名の高さ（描く範囲の下端＋名前の側の余白から、名前の下端まで） */
     let categoryHeight = 4;
 
@@ -405,6 +521,7 @@ function layoutWith(
         const left = reserve.left + (switchAxis ? 8 : Math.max(8, axisWidth + valueTitleSize));
         const right = reserve.right + (switchAxis ? Math.max(8, axisWidth + valueTitleSize) : 8);
         const width = W - left - right;
+        const top = reserve.top + badgeHeight + Math.max(labelRoom, referenceLabelRoom);
         const needed = minWidth > 0 ? n * minWidth : 0;
         if (needed > width + 1) scrollAxis = "x";
         content = scrollAxis ? needed : width;
@@ -426,7 +543,9 @@ function layoutWith(
         } else {
             rotated = true;
             step = Math.max(1, Math.ceil((categorySize * 1.45) / categoryStep));
-            const maxLength = (H * style.categoryAxis.maxShare) / SIN45;
+            // 上限を大きくしても、描く範囲に高さの 4 分の 1 は残す（棒グラフと同じ。1.11 までは 100% で描く範囲が無くなり、何も描かなかった）
+            const room = H * 0.75 - top - nearRoom - ROTATED_GAP - categorySize * 0.5 - categoryTitleSize - reserve.bottom - noticeHeight - (scrollAxis ? SCROLLBAR : 0);
+            const maxLength = Math.max(0, Math.min(H * style.categoryAxis.maxShare, room)) / SIN45;
             const longest = Math.max(0, ...bars.map((b) => measureTextWidth(pathOf(b), specOf(categoryFontOf(b)))));
             const length = Math.min(longest, maxLength);
             // 斜めの名前は (中心, 下端 + 8) を右端に -45° 回す。縦の広がりは長さ × sin45 と、文字の下側の少し
@@ -436,15 +555,29 @@ function layoutWith(
                 lines: [truncateStartToWidth(pathOf(b), length, specOf(categoryFontOf(b)))],
                 title: b.fullLabel,
             }));
+            if (scrollAxis) {
+                // 斜めの名前は棒の中心から左下へ伸びる。スクロールすると中身の左端より外は見えないので、はみ出す分だけ前を空ける
+                leadIn = Math.max(
+                    0,
+                    ...categoryTexts.map((t, k) =>
+                        k % step !== 0 || !t.lines.length
+                            ? 0
+                            : measureTextWidth(t.lines[0], specOf(categoryFontOf(bars[k]))) * SIN45 +
+                              categorySize * 0.5 -
+                              categoryStep * (outer + k + (1 - pad) / 2)
+                    )
+                );
+                content += leadIn;
+            }
         }
-        const top = reserve.top + badgeHeight + Math.max(labelRoom, referenceLabelRoom);
         const bottomReserve =
             nearRoom + categoryHeight + categoryTitleSize + reserve.bottom + noticeHeight + (scrollAxis ? SCROLLBAR : 0);
         plot = { x: left, y: top, width, height: H - top - bottomReserve };
     } else {
         const tickHeight = style.valueAxis.show ? tickFont.size + 8 : 4;
-        const top = reserve.top + badgeHeight + referenceLabelRoom + 4 + (switchAxis ? tickHeight + valueTitleSize : 0);
-        const bottom = reserve.bottom + noticeHeight + (switchAxis ? 4 : tickHeight + valueTitleSize);
+        // 単位のラベルは値の軸の側（下なら目盛りとタイトルの下、上ならその上）に 1 行とる（棒グラフの横棒と同じ）
+        const top = reserve.top + (switchAxis ? badgeHeight : 0) + referenceLabelRoom + 4 + (switchAxis ? tickHeight + valueTitleSize : 0);
+        const bottom = reserve.bottom + noticeHeight + (switchAxis ? 4 : tickHeight + valueTitleSize + badgeHeight);
         const height0 = H - top - bottom;
         const needed = minWidth > 0 ? n * minWidth : 0;
         if (needed > height0 + 1) scrollAxis = "y";
@@ -461,7 +594,10 @@ function layoutWith(
                 )
             )
         );
-        const categoryWidth = style.categoryAxis.show ? Math.min(widest + 12, W * style.categoryAxis.maxShare) : 0;
+        const labelRoom = style.dataLabels.show ? Math.min(valueLabelWidth + 10, W * 0.25) : 8;
+        // 上限を大きくしても、描く範囲に幅の 4 分の 1 は残す（縦向きと同じ）
+        const room = W * 0.75 - reserve.left - categoryTitleSize - nearRoom - reserve.right - labelRoom - (scrollAxis ? SCROLLBAR : 0);
+        const categoryWidth = style.categoryAxis.show ? Math.max(0, Math.min(widest + 12, W * style.categoryAxis.maxShare, room)) : 0;
         const textWidth = Math.max(0, categoryWidth - 12);
         categoryTexts = bars.map((b) => ({
             lines: !style.categoryAxis.show
@@ -474,7 +610,6 @@ function layoutWith(
                   : [truncateStartToWidth(textOf(b), textWidth, specOf(categoryFontOf(b)))],
             title: b.fullLabel,
         }));
-        const labelRoom = style.dataLabels.show ? Math.min(valueLabelWidth + 10, W * 0.25) : 8;
         const left = reserve.left + categoryTitleSize + Math.max(8, categoryWidth) + nearRoom;
         const right = reserve.right + labelRoom + (scrollAxis ? SCROLLBAR : 0);
         plot = { x: left, y: top, width: W - left - right, height: height0 };
@@ -484,9 +619,11 @@ function layoutWith(
 
     // --- 値 → 画面の座標 --------------------------------------------------------------------------
     const span = axis.max - axis.min || 1;
-    // 軸を切ったときは、切った側の端に印の余白をとる（目盛りはその内側に並ぶ）
-    const lowZone = axis.cut === "bottom" ? BREAK_ZONE : 0;
-    const highZone = axis.cut === "top" ? BREAK_ZONE : 0;
+    // 軸を切ったときは、切った側の端に印の余白をとる（目盛りはその内側に並ぶ）。
+    // 「切った印」をなしにしたときは、標準と同じく印も余白もとらず、軸の外の分をそのまま省く
+    const marked = style.breakStyle !== BREAK_STYLES.none;
+    const lowZone = marked && axis.cut === "bottom" ? BREAK_ZONE : 0;
+    const highZone = marked && axis.cut === "top" ? BREAK_ZONE : 0;
     const whole = horizontal ? plot.width : plot.height;
     const valueLength = whole - lowZone - highZone;
     /** 値の小さい端からの距離 → 画面の座標。範囲の反転ではひっくり返す */
@@ -501,8 +638,8 @@ function layoutWith(
     const growth = horizontal ? (invert ? -1 : 1) : invert ? 1 : -1;
 
     // 項目の方向：中身（スクロールするなら中身の長さ）の中で並べる
-    const categoryOrigin = horizontal ? plot.y : plot.x;
-    const categoryStepLength = content / (n - pad + 2 * outer);
+    const categoryOrigin = (horizontal ? plot.y : plot.x) + leadIn;
+    const categoryStepLength = (content - leadIn) / (n - pad + 2 * outer);
     const barThickness = Math.max(1, categoryStepLength * (1 - pad));
     const bandStart = (k: number) => categoryOrigin + categoryStepLength * (outer + k);
 
@@ -510,7 +647,10 @@ function layoutWith(
     const rectOf = (a: number, b: number, k: number): Rect => {
         let p1 = Math.min(pos(a), pos(b));
         let p2 = Math.max(pos(a), pos(b));
-        if (p2 - p1 < 1) {
+        // 両端とも軸の範囲の同じ側の外なら描かない（1px にすると、見えないはずの棒が端に細い帯で残る）
+        const outside = (Math.max(a, b) < axis.min || Math.min(a, b) > axis.max) && a !== b;
+        if (outside) p2 = p1;
+        else if (p2 - p1 < 1) {
             p1 -= 0.5;
             p2 = p1 + 1;
         }
@@ -519,24 +659,63 @@ function layoutWith(
             : { x: bandStart(k), y: p1, width: barThickness, height: p2 - p1 };
     };
 
+    /**
+     * 角を丸める端。棒の端（いちばん上・下）を丸め、値 0 の軸に乗っている端だけ四角にする
+     * （棒グラフと同じく、四角い端は「軸に乗っている」と読める）。合計は値の端だけ、浮いた増減・小計は両端
+     * （2026-09-24 ユーザーと決定。片側だけ丸めると、四角い側が何かに乗っているように見える）。
+     * 系列で積むときは、棒の端に届く外側の区画の、その端だけ。軸の範囲の外で切れた端は、そこが本当の端ではないので丸めない
+     */
+    /** 棒の外側の端（いちばん上・下）で、0 の軸に乗っていない値か */
+    const outerEnd = (v: number, low: number, high: number) => style.columns.cornerRadius > 0 && (v === low || v === high) && v !== 0;
+    /** 軸の範囲の中か（外なら、描く端は切れた所で本当の端ではない） */
+    const inRange = (v: number) => v >= axis.min && v <= axis.max;
+    /** 値 a〜b の長方形のうち、a の端が画面のどちらの辺か */
+    const sideOfEnd = (a: number, b: number): CornerSide =>
+        horizontal ? (pos(a) > pos(b) ? "right" : "left") : pos(a) < pos(b) ? "top" : "bottom";
+
     const laid: BarLayout[] = bars.map((bar, k) => {
         const [low, high] = extentOf(bar);
         const rect = rectOf(low, high, k);
-        const segments = bar.segments.map((segment) => ({
-            segment,
-            rect: rectOf(segment.from, segment.to, k),
-            highlight: segment.highlightTo === null ? null : rectOf(segment.from, segment.highlightTo, k),
-        }));
+        const segments = bar.segments.map((segment): SegmentLayout => {
+            const { from, to, highlightTo } = segment;
+            const segmentRect = rectOf(from, to, k);
+            const roundFrom = from !== to && outerEnd(from, low, high) && inRange(from);
+            const roundTo = from !== to && outerEnd(to, low, high) && inRange(to);
+            // 該当分が 0（highlightTo = from）のハイライトは 1px の帯になる。丸めた端に四角い帯を重ねないよう、そのときは描かない
+            const highlight = highlightTo === null || (highlightTo === from && roundFrom) ? null : rectOf(from, highlightTo, k);
+            // ハイライトの該当分は、積み始めの端は区画と同じに、該当分の終わりは、区画の外側の端に当たる区画のときに丸める
+            // （棒グラフと同じく値の端を丸める）。終わりが 0・軸の範囲の外なら四角
+            const roundHighlightEnd =
+                highlight !== null && highlightTo !== null && highlightTo !== from && outerEnd(to, low, high) && highlightTo !== 0 && inRange(highlightTo);
+            const cornerOf = (sides: CornerSide[]): Corner | null =>
+                sides.length ? { sides, radius: style.columns.cornerRadius } : null;
+            return {
+                segment,
+                rect: segmentRect,
+                highlight,
+                corner: cornerOf([...(roundFrom ? [sideOfEnd(from, to)] : []), ...(roundTo ? [sideOfEnd(to, from)] : [])]),
+                highlightCorner:
+                    highlight && highlightTo !== null && highlightTo !== from
+                        ? cornerOf([
+                              ...(roundFrom ? [sideOfEnd(from, highlightTo)] : []),
+                              ...(roundHighlightEnd ? [sideOfEnd(highlightTo, from)] : []),
+                          ])
+                        : null,
+            };
+        });
 
         let category: BarLayout["category"] = null;
         const texts = categoryTexts[k];
         if (texts.lines.length && k % step === 0) {
             if (!horizontal) {
                 const cx = rect.x + rect.width / 2;
+                // 斜めの名前は、文字の高さの中ほど（ベースラインから 0.35 文字）を通る線が棒の中心で終わるように、
+                // ベースラインを文字の下側（右下）へずらす。ベースラインの端を中心に置くと、文字の本体が左上に寄って見える
+                const lift = categoryFontOf(bar).size * 0.35 * SIN45;
                 category = rotated
                     ? {
-                          x: cx,
-                          y: plot.y + plot.height + nearRoom + ROTATED_GAP,
+                          x: cx + lift,
+                          y: plot.y + plot.height + nearRoom + ROTATED_GAP + lift,
                           anchor: "end",
                           lines: texts.lines,
                           rotate: -45,
@@ -577,7 +756,7 @@ function layoutWith(
     // 一番下の目盛り（軸の端）の外に余白（BREAK_ZONE）をとり、印はその真ん中に置く。
     // 目盛りの線のすぐ上に印があると、その目盛りのすぐ上で切ったように見えるため（実際は 0 と端の目盛りのあいだを省いている）
     const breaks: BreakMark[] = [];
-    if (axis.cut !== "none") {
+    if (marked && axis.cut !== "none") {
         const center = screen(axis.cut === "bottom" ? BREAK_ZONE / 2 : whole - BREAK_ZONE / 2);
         for (const b of laid) {
             if (b.bar.kind !== BAR_KINDS.total) continue;
@@ -594,12 +773,30 @@ function layoutWith(
     // 棒の上（下）の辺にも線が重なる。横向きは、前の棒の上端から次の棒の下端まで。
     // 小計（浮いた棒）は累計を進めないので、前後の線は同じ高さになる。同じ高さの線は 1 本にまとめる
     // （二重に引くと、点線・破線の模様がずれて濃く見えるため）
+    // 棒の端を丸めていれば、線はその端の角で止める（丸めて削った角の上に直線を残さない）
     const connectors: Line[] = [];
+    /** 棒 b の、画面の位置 level にある辺を丸めた半径。その辺を丸めていなければ 0 */
+    const roundedAt = (b: BarLayout, level: number): number =>
+        Math.max(
+            0,
+            ...b.segments.map((s) => {
+                if (!s.corner) return 0;
+                const edgeOf: Record<CornerSide, number> = {
+                    top: s.rect.y,
+                    bottom: s.rect.y + s.rect.height,
+                    left: s.rect.x,
+                    right: s.rect.x + s.rect.width,
+                };
+                return s.corner.sides.some((side) => Math.abs(edgeOf[side] - level) < 0.5) ? cornerRadiusOf(s.rect, s.corner) : 0;
+            })
+        );
     for (let k = 0; k + 1 < laid.length; k++) {
         const level = pos(laid[k].bar.to);
         const a = laid[k].rect;
         const b = laid[k + 1].rect;
-        const [u0, u1] = horizontal ? [a.y, b.y + b.height] : [a.x, b.x + b.width];
+        const trimStart = roundedAt(laid[k], level);
+        const trimEnd = roundedAt(laid[k + 1], level);
+        const [u0, u1] = horizontal ? [a.y + trimStart, b.y + b.height - trimEnd] : [a.x + trimStart, b.x + b.width - trimEnd];
         const line = horizontal ? { x1: level, y1: u0, x2: level, y2: u1 } : { x1: u0, y1: level, x2: u1, y2: level };
         const last = connectors[connectors.length - 1];
         const sameLevel = last && Math.abs((horizontal ? last.x1 : last.y1) - level) < 0.5;
@@ -614,15 +811,21 @@ function layoutWith(
 
     // --- 目盛り・グリッド線（グリッド線は中身の長さいっぱい） --------------------------------------
     const plotEnd = horizontal ? plot.y + plot.height : plot.x + plot.width;
-    const contentEnd = scrollAxis ? categoryOrigin + content : plotEnd;
-    // 描く範囲が狭くて目盛りの数字が重なるときは、間引いて出す（グリッド線も同じ目盛りだけ。0 があれば 0 を残す）
-    const tickSpacing = axis.ticks.length > 1 ? Math.abs(pos(axis.ticks[1].value) - pos(axis.ticks[0].value)) : Infinity;
+    // categoryOrigin は先頭の余白（leadIn）を足した後。中身の端は余白ごと数える
+    const contentEnd = scrollAxis ? (horizontal ? plot.y : plot.x) + content : plotEnd;
+    // 目盛りの本数は、標準と同じく描く範囲の長さで決める（縦は高さ 150・300px、横は幅 300・500px で 3・5・8 まで）
+    // 「目盛りの本数 (目安)」があればその本数
+    const axisTicks = axis.ticksFor
+        ? axis.ticksFor(style.valueAxis.tickCount || recommendedTickCount(horizontal ? plot.width : plot.height, horizontal ? "horizontal" : "vertical"))
+        : axis.ticks;
+    // それでも目盛りの数字が重なるときは、間引いて出す（グリッド線も同じ目盛りだけ。0 があれば 0 を残す）
+    const tickSpacing = axisTicks.length > 1 ? Math.abs(pos(axisTicks[1].value) - pos(axisTicks[0].value)) : Infinity;
     // 縦は文字の行の高さ（和文も入るフォントの上下の広がり 1.4 文字）ぶん、横は一番長い数字 + 8px
     const tickNeed = horizontal ? tickLabelWidth + 8 : tickFont.size * 1.4;
     const tickStride = tickSpacing > 0 ? Math.max(1, Math.ceil(tickNeed / tickSpacing)) : 1;
-    const zeroTick = axis.ticks.findIndex((t) => t.value === 0);
+    const zeroTick = axisTicks.findIndex((t) => t.value === 0);
     const tickPhase = zeroTick >= 0 ? zeroTick % tickStride : 0;
-    const shownTicks = axis.ticks.filter((_, i) => i % tickStride === tickPhase);
+    const shownTicks = axisTicks.filter((_, i) => i % tickStride === tickPhase);
     const ticks: TextLayout[] = style.valueAxis.show
         ? shownTicks.map(
               (t): TextLayout =>
@@ -685,7 +888,9 @@ function layoutWith(
             const x = switchAxis ? W - reserve.right - 4 - valueTitleFont.size * 0.22 : reserve.left + 4 + valueTitleFont.size * 0.8;
             valueTitleLayout = titleText(valueTitle.text, valueTitleFont, x, plot.y + plot.height / 2, -90, plot.height);
         } else {
-            const y = switchAxis ? plot.y - (style.valueAxis.show ? tickFont.size + 8 : 4) - 4 : H - reserve.bottom - noticeHeight - 4;
+            const y = switchAxis
+                ? plot.y - (style.valueAxis.show ? tickFont.size + 8 : 4) - 4
+                : H - reserve.bottom - noticeHeight - 4 - badgeHeight;
             valueTitleLayout = titleText(valueTitle.text, valueTitleFont, plot.x + plot.width / 2, y, 0, plot.width);
         }
     }
@@ -787,18 +992,21 @@ function layoutWith(
     }
 
     // 単位のラベル：縦向きは値の軸の目盛りの列にそろえて、描く範囲の上に置く（棒グラフと同じ）。
-    // 軸のタイトルは描く範囲の高さに収めてあるので、上の単位とは重ならない。横向きは左上
+    // 軸のタイトルは描く範囲の高さに収めてあるので、上の単位とは重ならない。
+    // 横向きは値の軸の端（右）にそろえ、値の軸が下なら目盛りとタイトルの下、上ならその上に置く（棒グラフの横棒と同じ。1.11 までは左上）
     let badge: TextLayout | null = null;
     if (badgeHeight) {
         const badgeWidth = measureTextWidth(viewModel.unitBadge, specOf(tickFont));
         const [x, anchor]: [number, TextLayout["anchor"]] = horizontal
-            ? [reserve.left + 2, "start"]
+            ? // 単位が長くても左の凡例・ビューの外に出ないように、左端で止める
+              [Math.max(Math.min(plot.x + plot.width, W - reserve.right - 2), reserve.left + 2 + badgeWidth), "end"]
             : switchAxis
               ? [Math.min(plot.x + plot.width + 6, W - reserve.right - 2 - badgeWidth), "start"]
               : [Math.max(plot.x - 6, reserve.left + 2 + badgeWidth), "end"];
         badge = {
             x,
-            y: reserve.top + tickFont.size,
+            // 下に置くときは、文字の下側（0.22 文字）までがとった行に収まるように（文字が大きくても凡例・知らせに掛けない）
+            y: horizontal && !switchAxis ? H - reserve.bottom - noticeHeight - 1 - tickFont.size * 0.22 : reserve.top + badgeRowFont,
             anchor,
             lines: [viewModel.unitBadge],
             rotate: 0,
@@ -806,24 +1014,58 @@ function layoutWith(
             lineHeight: tickFont.size + 2,
         };
     }
+    // ドリルダウンした位置。単位のラベルの行に並べるときは描く範囲の左端から（単位は目盛りの列の上、軸を右に移せば右）、
+    // 自分の行をとるときはその左端から。入りきらなければ末尾を「…」で省く（ツールヒントに全部）
+    // 単位のラベルは、目盛りの列より長いと描く範囲の左端を越えて伸びる（軸を右に移せば、右端の外から左へ）。その端から 8px 空ける
+    const sharedDrillPathSpot = () => {
+        const badgeBox = badge ? boxOf(badge, 0) : null;
+        if (switchAxis) {
+            const right = badgeBox ? Math.min(plot.x + plot.width, badgeBox.x - 8) : plot.x + plot.width;
+            return { x: plot.x, y: reserve.top + badgeRowFont, width: right - plot.x };
+        }
+        const x = badgeBox ? Math.max(plot.x, badgeBox.x + badgeBox.width + 8) : plot.x;
+        return { x, y: reserve.top + badgeRowFont, width: W - reserve.right - x };
+    };
+    const drillPathSpot: { x: number; y: number; width: number } | null = !viewModel.drillPath
+        ? null
+        : pathSharesBadgeRow
+          ? sharedDrillPathSpot()
+          : { x: reserve.left + 2, y: reserve.top - drillPathRow + 3 + drillPathFont.size, width: W - reserve.left - reserve.right };
+    const drillPathText = drillPathSpot ? truncateToWidth(viewModel.drillPath, Math.max(0, drillPathSpot.width - 4), specOf(drillPathFont)) : "";
+    const drillPath: (TextLayout & { title: string }) | null = drillPathSpot && drillPathText
+        ? {
+              x: drillPathSpot.x,
+              y: drillPathSpot.y,
+              anchor: "start",
+              lines: [drillPathText],
+              rotate: 0,
+              font: drillPathFont,
+              lineHeight: drillPathFont.size + 2,
+              title: viewModel.drillPath,
+          }
+        : null;
     // --- ラベルの置き方（docs/waterfall.md「見せ方」） --------------------------------------------------------
     // 1. ぶつかってはいけない物を集める：棒、接続線、目標の線、定数線、軸（目盛り・タイトル）、項目名の側、凡例、単位のラベル
     // 2. ラベルごとに、棒のすぐそばの候補を好ましい順に作る（書式の「位置」が自動でなければ、その 1 つだけ）
     // 3. 大事なラベルから置く（合計 → 小計 → 増減の絶対値の大きい順。そのあと定数線・目標の名前）。
     //    候補を上から試し、何ともぶつからない最初の場所に置く。どこにも置けなければ出さない（値はツールヒントで見られる）
-    const BIG = 1e6;
+    // 帯を「どこまでも」伸ばす長さ。スクロールする中身より長くとる（100 万 px 固定だと、項目がとても多いと先の方に届かない）
+    const BIG = 1e6 + content;
     /** 中身（スクロールするときはスクロールする側）の範囲。ラベルはこの中に出す */
     const contentBox: Rect = !scrollAxis
         ? { x: 0, y: 0, width: W, height: H }
         : horizontal
           ? { x: 0, y: plot.y, width: W, height: content }
           : { x: plot.x, y: 0, width: content, height: H };
-    /** 窓（ビューの座標）。スクロールしないときはビュー全体 */
+    /**
+     * 窓（ビューの座標）。スクロールしないときはビュー全体。スクロール バーは窓の端に出るので、凡例・知らせの手前で止める
+     * （スクロール バーの幅は描く範囲の外に取ってある）
+     */
     const regionBox: Rect = !scrollAxis
         ? { x: 0, y: 0, width: W, height: H }
         : horizontal
-          ? { x: 0, y: plot.y, width: W, height: plot.height }
-          : { x: plot.x, y: 0, width: plot.width, height: H };
+          ? { x: 0, y: plot.y, width: W - reserve.right, height: plot.height }
+          : { x: plot.x, y: 0, width: plot.width, height: H - reserve.bottom - noticeHeight };
     // 斜めの項目名は、右端の文字の上側が (下端 + ROTATED_GAP) より 0.75 文字ほど上に出る
     const rotatedRise = rotated ? Math.min(0, ROTATED_GAP - categorySize * 0.75) : 0;
     /** 項目名の側の端（縦は下端の y、横は左端の x）。ここから外は項目名・X 軸のタイトル */
@@ -838,6 +1080,8 @@ function layoutWith(
         ...(valueTitleLayout ? [boxOf(valueTitleLayout, 0)] : []),
         ...(categoryTitleLayout ? [boxOf(categoryTitleLayout, 0)] : []),
         ...(badge ? [boxOf(badge, 0)] : []),
+        // 単位のラベルの行に並べたドリルの位置（自分の行をとるときは、下の上の余白に含まれる）
+        ...(drillPath ? [boxOf(drillPath, 0)] : []),
         // 凡例の場所（上は凡例が無くても題名の下の余白）
         { x: 0, y: 0, width: W, height: reserve.top },
         ...(reserve.bottom ? [{ x: 0, y: H - noticeHeight - reserve.bottom, width: W, height: reserve.bottom }] : []),
@@ -864,7 +1108,7 @@ function layoutWith(
         ...(constantLine ? [lineObstacle(constantLine, "ref:constant")] : []),
         // 項目名の側（項目名・X 軸のタイトル・スクロール バー）
         nearBand,
-        ...(scrollAxis === "y" ? [asBox({ x: W - SCROLLBAR, y: -BIG, width: SCROLLBAR, height: 2 * BIG })] : []),
+        ...(scrollAxis === "y" ? [asBox({ x: W - reserve.right - SCROLLBAR, y: -BIG, width: SCROLLBAR, height: 2 * BIG })] : []),
         ...overlayInContent.map(asBox),
     ];
 
@@ -921,10 +1165,9 @@ function layoutWith(
             }
         };
         const across = horizontal ? rect.y + rect.height / 2 : rect.x + rect.width / 2;
-        // 比べる形の小計は透かして描くので、背景と混ざった色で文字色を決める
+        // 比べる形の小計は、見せ方によって棒の中の色が違う（透かす・枠だけ・斜線・点線の枠）。その色で文字色を決める
         const rawColor = bar.segments[0]?.color ?? bar.color;
-        const segmentColor =
-            bar.kind === BAR_KINDS.subtotal && style.subtotalOpacity < 1 ? blend(rawColor, style.background, 1 - style.subtotalOpacity) : rawColor;
+        const segmentColor = bar.kind === BAR_KINDS.subtotal ? subtotalPaint(style, rawColor).under : rawColor;
         const explicit = isTotalBar(bar) ? style.dataLabels.totalFont.color : style.dataLabels.font.color;
         const candidates = spots.map((spot): Candidate<TextLayout> => {
             const inside = spot !== "outEnd" && spot !== "outStart";
@@ -1041,11 +1284,7 @@ function layoutWith(
         scroll: {
             axis: scrollAxis,
             // スクロールしないときは、ビュー全体を窓にする（斜めの項目名などが描く範囲の外にはみ出しても切らない）
-            region: !scrollAxis
-                ? { x: 0, y: 0, width: W, height: H }
-                : horizontal
-                  ? { x: 0, y: plot.y, width: W, height: plot.height }
-                  : { x: plot.x, y: 0, width: plot.width, height: H },
+            region: regionBox,
             content,
         },
         bars: laid,
@@ -1059,6 +1298,7 @@ function layoutWith(
         valueTitle: valueTitleLayout,
         categoryTitle: categoryTitleLayout,
         badge,
+        drillPath,
         notice: viewModel.notice ? { x: 4, y: H - 4 } : null,
         rotatedCategories: rotated,
         categoryStep: step,
