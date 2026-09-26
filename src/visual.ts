@@ -11,6 +11,7 @@ import { FormattingSettingsService } from "powerbi-visuals-utils-formattingmodel
 
 import "./../style/visual.less";
 import { App } from "./App";
+import { hasBrowserMenu } from "./shared/copyImage";
 import { VisualFormattingSettingsModel } from "./settings";
 import { toRootCoordinates } from "./shared/tooltip";
 import { LOADING_NOTICE, TRUNCATED_NOTICE, TooltipTarget, transform, ViewModel } from "./viewModel";
@@ -109,6 +110,8 @@ export class Visual implements IVisual {
                         onTooltipShow: (bar, x, y) => this.showTooltip(bar, x, y, false),
                         onTooltipMove: (bar, x, y) => this.showTooltip(bar, x, y, true),
                         onTooltipHide: () => this.tooltipService.hide({ isTouchEvent: false, immediately: false }),
+                        interactive: allowInteractions,
+                        browserMenu: hasBrowserMenu(this.host.hostEnv),
                     })
                 );
             this.renderLatest = render;

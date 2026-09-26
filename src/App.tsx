@@ -17,6 +17,8 @@ import powerbi from "powerbi-visuals-api";
 
 import { BAR_KINDS, Bar, BarKind, Segment, TooltipTarget, ViewModel } from "./viewModel";
 import { ChartLayout, Line, Rect, SegmentLayout, TextLayout, barPath, layoutOf, subtotalPaint } from "./layout";
+import { SCROLL_STARTS, useScrollStart } from "./shared/scrollStart";
+import { CopyImageButton } from "./shared/CopyImageButton";
 
 import IViewport = powerbi.IViewport;
 import ISelectionId = powerbi.visuals.ISelectionId;
@@ -43,6 +45,10 @@ export interface AppProps {
     onTooltipShow?: (target: TooltipTarget, x: number, y: number) => void;
     onTooltipMove?: (target: TooltipTarget, x: number, y: number) => void;
     onTooltipHide?: () => void;
+    /** 操作できる場所か。ダッシュボードのタイルなどでは、画像のコピーのボタンを出さない */
+    interactive?: boolean;
+    /** 画像のコピーのボタンの右クリックで、ブラウザーのメニュー（「画像をコピー」）を出すか（Desktop では出ないので false） */
+    browserMenu?: boolean;
 }
 
 /** ハイコントラストで増減を見分ける線の種類 */
@@ -118,9 +124,23 @@ export const App: React.FC<AppProps> = ({
     onTooltipShow,
     onTooltipMove,
     onTooltipHide,
+    interactive = true,
+    browserMenu = false,
 }) => {
     // 斜線の模様の id を、同じページのほかのウォーターフォールとぶつけない（SVG の id はページ全体で引かれる）
     const uid = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+    // はみ出したときの最初の位置。縦向きは横に、横向きは縦にスクロールする。末尾なら、棒の数・両端が変わったら当て直す
+    const categoryAxis = viewModel.style.categoryAxis;
+    const scrollStart = useScrollStart<HTMLDivElement>({
+        axis: viewModel.style.orientation === "horizontal" ? "y" : "x",
+        target: categoryAxis.scrollStart === SCROLL_STARTS.end ? "end" : "start",
+        shape: JSON.stringify([
+            viewModel.style.orientation,
+            viewModel.bars.length,
+            viewModel.bars[0]?.key ?? null,
+            viewModel.bars[viewModel.bars.length - 1]?.key ?? null,
+        ]),
+    });
     const backgroundHandlers = {
         onClick: () => onClearSelection(),
         onContextMenu: (e: React.MouseEvent) => {
@@ -182,6 +202,8 @@ export const App: React.FC<AppProps> = ({
         <div className="wf-container" style={{ width: viewport.width, height: viewport.height }} {...backgroundHandlers}>
             <div
                 className={`wf-scroll${scroll.axis ? ` wf-scroll-${scroll.axis}` : ""}`}
+                ref={scrollStart.ref}
+                onScroll={scrollStart.onScroll}
                 style={{ left: region.x, top: region.y, width: region.width, height: region.height }}
             >
                 <svg className="wf-svg" width={contentWidth} height={contentHeight} role="img" aria-label="ウォーターフォール">
@@ -485,6 +507,15 @@ export const App: React.FC<AppProps> = ({
                     </text>
                 )}
             </svg>
+            {interactive && viewModel.copyButton && (
+                <CopyImageButton
+                    alt="ウォーターフォールの画像"
+                    stamp={[viewModel, viewport.width, viewport.height, selectedIds]}
+                    background={style.background}
+                    colors={hc ? { foreground: hc.foreground, background: hc.background } : undefined}
+                    browserMenu={browserMenu}
+                />
+            )}
         </div>
     );
 };

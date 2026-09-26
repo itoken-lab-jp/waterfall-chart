@@ -19,6 +19,7 @@ import Model = formattingSettings.Model;
 import { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS } from "./shared/units";
 import { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, LegendPosition, standardLegendPosition, legendPlacementValue } from "./shared/legend";
 import { AutoNumUpDown, itemOf } from "./shared/formatting";
+import { SCROLL_START_ITEMS } from "./shared/scrollStart";
 import { NEGATIVE_STYLE_ITEMS, ZERO_STYLE_ITEMS, SIGN_TONE_MODE_ITEMS, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
 
 export { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS };
@@ -277,6 +278,14 @@ export class LayoutCardSettings extends SimpleCard {
         value: true,
     });
 
+    /** マウスを乗せたとき、右下に「画像としてコピー」のボタンを出す。標準に無い項目 */
+    copyButton = new formattingSettings.ToggleSwitch({
+        name: "copyButton",
+        displayName: "画像のコピー",
+        description: "マウスを乗せたとき、右下に「画像としてコピー」のボタンを出す。押すと、見えているグラフを画像としてクリップボードに入れ、PowerPoint などに貼れる",
+        value: true,
+    });
+
     slices = [
         this.orientation,
         this.connectMode,
@@ -287,6 +296,7 @@ export class LayoutCardSettings extends SimpleCard {
         this.totalShow,
         this.totalLabel,
         this.drillPathShow,
+        this.copyButton,
     ];
 
     /**
@@ -925,6 +935,14 @@ export class CategoryAxisCardSettings extends CompositeCard {
         value: 20,
     });
 
+    /** はみ出してスクロールするとき、開いたときにどこから見せるか。末尾は最後の棒の側 */
+    scrollStart = new formattingSettings.ItemDropdown({
+        name: "scrollStart",
+        displayName: "スクロールの最初の位置",
+        items: SCROLL_START_ITEMS,
+        value: SCROLL_START_ITEMS[0],
+    });
+
     valuesGroup = new Group({
         name: "categoryValues",
         displayName: "値",
@@ -962,7 +980,7 @@ export class CategoryAxisCardSettings extends CompositeCard {
     layoutGroup = new Group({
         name: "categoryLayout",
         displayName: "レイアウト",
-        slices: [this.minCategoryWidth],
+        slices: [this.minCategoryWidth, this.scrollStart],
     });
 
     groups = [this.valuesGroup, this.totalsGroup, this.titleGroup, this.layoutGroup];

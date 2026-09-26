@@ -50,6 +50,7 @@ import { Formatter, LEVEL_SEPARATOR, ParsedItem, Parsed, parse } from "./data";
 import { formatValue, resolveUnit, unitBadgeOf } from "./unitUtils";
 import { ticksUpTo, tickCountOf, boundOf } from "./shared/ticks";
 import { gridDashOf } from "./shared/gridlines";
+import { SCROLL_STARTS } from "./shared/scrollStart";
 import { blend } from "./shared/color";
 import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
 
@@ -233,6 +234,8 @@ export interface ViewStyle {
         maxShare: number;
         /** 帯の最小の幅（px）。これより狭くなるとスクロールする。0 ならスクロールしない */
         minCategoryWidth: number;
+        /** はみ出してスクロールするとき、開いたときにどこから見せるか（start・end） */
+        scrollStart: string;
         title: AxisTitle | null;
     };
     /** tickCount：目盛りの本数の目安。0 なら自動（描く範囲の長さで決める） */
@@ -268,6 +271,8 @@ export interface ViewModel {
     unitBadge: string;
     /** ドリルダウンした位置（「事業A ＞ 製品A1」）。ドリルしていない・出さないときは空 */
     drillPath: string;
+    /** 「画像としてコピー」のボタンを出すか */
+    copyButton: boolean;
     legend: LegendItem[];
     target: TargetLine | null;
     /** 定数線（固定の値）。出さなければ null */
@@ -396,6 +401,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
             ),
             maxShare: clamp(Number(settings.categoryAxis.maxHeight.value) || 25, 5, 100) / 100,
             minCategoryWidth: Math.max(0, Number(settings.categoryAxis.minCategoryWidth.value) || 0),
+            scrollStart: dropdownValue(settings.categoryAxis.scrollStart, SCROLL_STARTS.start),
             title: null,
         },
         valueAxis: {
@@ -463,6 +469,7 @@ function emptyOf(style: ViewStyle, message: string): ViewModel {
         axis: { min: 0, max: 1, ticks: [], cut: "none" },
         unitBadge: "",
         drillPath: "",
+        copyButton: false,
         legend: [],
         target: null,
         constantLine: null,
@@ -1285,6 +1292,7 @@ export function transform(
         unitBadge:
             (axisSettings.unitShow.value ?? true) && !unitInTitle ? unitBadgeOf(unit.unitWord, axisSettings.unitText.value ?? "") : "",
         drillPath: (settings.layout.drillPathShow.value ?? true) ? drillPath : "",
+        copyButton: settings.layout.copyButton.value ?? true,
         legend,
         target,
         constantLine,

@@ -4,7 +4,7 @@
     "displayName": "ウォーターフォール by itoken lab",
     "guid": "WaterfallChart91AB3AB062BE40ECA7CC2EF3F7F6D484",
     "visualClassName": "Visual",
-    "version": "1.14.1.0",
+    "version": "1.15.1.0",
     "description": "計画から実績までの差を、階層でドリルダウンしてたどるウォーターフォール",
     "supportUrl": "https://github.com/itoken-lab-jp/waterfall-chart/issues",
     "gitHubUrl": "https://github.com/itoken-lab-jp/waterfall-chart"
@@ -22,5 +22,5 @@
   "capabilities": "capabilities.json",
   "dependencies": null,
   "stringResources": [],
-  "version": "1.14.1.0"
+  "version": "1.15.1.0"
 }

@@ -185,6 +185,12 @@
                         "text": true
                     }
                 },
+                "copyButton": {
+                    "displayName": "画像のコピー",
+                    "type": {
+                        "bool": true
+                    }
+                },
                 "drillPathShow": {
                     "displayName": "ドリルの位置",
                     "type": {
@@ -952,6 +958,12 @@
                     "displayName": "カテゴリの最小幅 (px)",
                     "type": {
                         "numeric": true
+                    }
+                },
+                "scrollStart": {
+                    "displayName": "スクロールの最初の位置",
+                    "type": {
+                        "enumeration": []
                     }
                 }
             }
