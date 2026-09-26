@@ -1159,7 +1159,10 @@ function layoutWith(
             const underneath = inside ? segmentColor : style.background;
             const base = labelFill ? blend(labelFill.color, underneath, 1 - labelFill.opacity) : underneath;
             // 棒の中は白を、外は灰色を優先する（標準と同じ。背景の既定は黒・透過性 90% なので、棒の中は白、外は灰色になる）
+            // 「符号の色」は棒の外か背景を付けたラベルだけ（合計には付けない）。棒の中は今までどおり読める色（標準も中のラベルは白）
+            const tone = bar.labelToneColor && (!inside || labelFill) ? bar.labelToneColor : "";
             const color =
+                tone ||
                 explicit ||
                 (inside
                     ? readableText(base, "#FFFFFF", INSIDE_TEXT_CONTRAST)

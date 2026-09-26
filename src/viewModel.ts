@@ -51,7 +51,7 @@ import { formatValue, resolveUnit, unitBadgeOf } from "./unitUtils";
 import { ticksUpTo, tickCountOf, boundOf } from "./shared/ticks";
 import { gridDashOf } from "./shared/gridlines";
 import { blend } from "./shared/color";
-import { formatSigned, NEGATIVE_STYLES, SignStyle, ZERO_STYLES } from "./shared/numberFormat";
+import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
 
 export { tickCountOf, gridDashOf, blend, boundOf };
 
@@ -127,6 +127,8 @@ export interface Bar {
     value: number;
     /** データ ラベル（表示単位で書式化済み） */
     labelText: string;
+    /** 値の文字を符号で塗る色（「符号の色」）。塗らなければ空か無し。合計には付けない */
+    labelToneColor?: string;
     /** 率（書式で選んだとき）。無ければ空 */
     rateText: string;
     /** 棒の色（系列で積むときは区画ごとの色が segments にある） */
@@ -1120,8 +1122,18 @@ export function transform(
         labelUnit
             ? formatSigned(v, labelUnit.divisor, labelPrecision, { ...signStyle, plus }, labelUnit.unitWord)
             : formatSigned(v, unit.divisor, labelPrecision, { ...signStyle, plus });
+    // 増減・小計の値の文字を符号で塗る（見える符号で決める。▲0 はマイナス、±0 は塗らない）
+    const toneMode = dropdownValue(settings.dataLabels.toneMode, TONE_MODES.none);
+    const toneColors = {
+        good: colorOf(settings.dataLabels.positiveColor) || DEFAULT_GOOD_COLOR,
+        bad: colorOf(settings.dataLabels.negativeColor) || DEFAULT_BAD_COLOR,
+    };
+    const labelDivisor = labelUnit ? labelUnit.divisor : unit.divisor;
     for (const bar of bars) {
-        bar.labelText = labelOf(bar.value, bar.kind !== BAR_KINDS.total && signStyle.plus);
+        const delta = bar.kind !== BAR_KINDS.total;
+        bar.labelText = labelOf(bar.value, delta && signStyle.plus);
+        const tone = delta ? toneOf(shownSignOf(bar.value, labelDivisor, labelPrecision, signStyle), 1, toneMode) : null;
+        bar.labelToneColor = tone ? toneColors[tone] : "";
     }
 
     const ink = (color: string) => style.highContrast?.foreground ?? color;

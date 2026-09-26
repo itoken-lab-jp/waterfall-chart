@@ -19,7 +19,7 @@ import Model = formattingSettings.Model;
 import { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS } from "./shared/units";
 import { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, LegendPosition, standardLegendPosition, legendPlacementValue } from "./shared/legend";
 import { AutoNumUpDown, itemOf } from "./shared/formatting";
-import { NEGATIVE_STYLE_ITEMS, ZERO_STYLE_ITEMS } from "./shared/numberFormat";
+import { NEGATIVE_STYLE_ITEMS, ZERO_STYLE_ITEMS, SIGN_TONE_MODE_ITEMS, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
 
 export { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS };
 
@@ -674,6 +674,27 @@ export class DataLabelsCardSettings extends CompositeCard {
         value: true,
     });
 
+    /** 増減の値の文字を符号で塗る（色なし・マイナスだけ・プラスとマイナス）。既定は色なし（今までの色）。合計には効かない */
+    toneMode = new formattingSettings.ItemDropdown({
+        name: "toneMode",
+        displayName: "符号の色",
+        description: "棒の外のラベルと、背景を付けたラベルに効く。棒の中のラベルは、棒の色に合わせて読める色を自動で選ぶ",
+        items: SIGN_TONE_MODE_ITEMS,
+        value: SIGN_TONE_MODE_ITEMS[0],
+    });
+
+    positiveColor = new formattingSettings.ColorPicker({
+        name: "positiveColor",
+        displayName: "プラスの色",
+        value: { value: DEFAULT_GOOD_COLOR },
+    });
+
+    negativeColor = new formattingSettings.ColorPicker({
+        name: "negativeColor",
+        displayName: "マイナスの色",
+        value: { value: DEFAULT_BAD_COLOR },
+    });
+
     rateType = new formattingSettings.ItemDropdown({
         name: "rateType",
         displayName: "率",
@@ -710,7 +731,7 @@ export class DataLabelsCardSettings extends CompositeCard {
     valuesGroup = new Group({
         name: "labelValues",
         displayName: "値",
-        slices: [this.font, this.color, this.unitType, this.precision, this.plusSign, this.negativeStyle, this.zeroStyle, this.negativeZero, this.rateType],
+        slices: [this.font, this.color, this.unitType, this.precision, this.plusSign, this.negativeStyle, this.zeroStyle, this.negativeZero, this.toneMode, this.positiveColor, this.negativeColor, this.rateType],
     });
 
     /** 合計・小計の棒のラベル。既定で太字にして、増減のラベルと見分ける */
