@@ -9,13 +9,14 @@
  *   まとまりの中は 値（1 つ以上）・起点・目標・ツールヒント
  *
  * 起点・目標・ツールヒントのメジャーも、行（項目）×系列ごとに評価されて届く。
- * 系列ごとの値がどれも同じなら系列に左右されないメジャーとみなして 1 つ、違えば足す（棒グラフの折れ線と同じ扱い）。
+ * 系列ごとの値がどれも同じなら系列に左右されないメジャーとみなして 1 つ、違えば足す。
  */
 
 import powerbi from "powerbi-visuals-api";
 import { valueFormatter } from "powerbi-visuals-utils-formattingutils";
 
 import { mergeOrders } from "./order";
+import { BLANK_TEXT } from "./shared/tooltip";
 
 import DataView = powerbi.DataView;
 import DataViewCategoryColumn = powerbi.DataViewCategoryColumn;
@@ -27,7 +28,7 @@ import ISelectionId = powerbi.visuals.ISelectionId;
 import PrimitiveValue = powerbi.PrimitiveValue;
 
 /** 空白の表記。Power BI の日本語の表記に合わせる */
-export const BLANK_TEXT = "(空白)";
+export { BLANK_TEXT };
 /** 上の階層の名前のつなぎ */
 export const LEVEL_SEPARATOR = " / ";
 /** 行を項目にまとめるときの区切り。表示名に現れない文字 */

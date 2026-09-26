@@ -48,6 +48,12 @@ import {
 } from "./settings";
 import { Formatter, LEVEL_SEPARATOR, ParsedItem, Parsed, parse } from "./data";
 import { formatValue, resolveUnit, unitBadgeOf } from "./unitUtils";
+import { ticksUpTo, tickCountOf, boundOf } from "./shared/ticks";
+import { gridDashOf } from "./shared/gridlines";
+import { blend } from "./shared/color";
+import { formatSigned, NEGATIVE_STYLES, SignStyle, ZERO_STYLES } from "./shared/numberFormat";
+
+export { tickCountOf, gridDashOf, blend, boundOf };
 
 import DataView = powerbi.DataView;
 import DataViewObject = powerbi.DataViewObject;
@@ -330,17 +336,6 @@ function fontOf(control: formattingSettings.FontControl, color: string): TextSty
     };
 }
 
-/**
- * グリッド線の線種。棒グラフと同じく、点線は細かい点、破線は 4px 刻み。
- * 「幅で拡大縮小」がオンなら、点線・破線の模様を線の幅に比例させる
- */
-export function gridDashOf(style: string, width: number, scaleWithWidth: boolean): string | null {
-    const w = Math.max(1, width);
-    if (style === LINE_STYLES.dotted) return scaleWithWidth ? `${w} ${2 * w}` : "1 3";
-    if (style === LINE_STYLES.dashed) return scaleWithWidth ? `${3 * w} ${3 * w}` : "4 4";
-    return null;
-}
-
 function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): ViewStyle {
     const palette = host.colorPalette as ISandboxExtendedColorPalette;
     const hc = palette.isHighContrast
@@ -429,7 +424,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
         columns: {
             categorySpacing: clamp(Number(settings.columns.categorySpacing.value ?? 20), 0, 50),
             outerPadding: typeof outerPadding === "number" && Number.isFinite(outerPadding) ? clamp(outerPadding, 0, 100) : null,
-            // 棒グラフと同じく 0〜30
+            // 角丸の半径は 0〜30 px
             cornerRadius: clamp(finiteOr(settings.columns.cornerRadius.value, 0), 0, 30),
         },
         subtotalStyle,
@@ -483,28 +478,6 @@ interface Colors {
     /** 左端の合計（起点）。書式で決めなければ total と同じ */
     start: string;
     others: string;
-}
-
-/**
- * 色を toward に amount だけ寄せる（#RRGGBB だけ。読めなければそのまま）。
- * 透かして描く小計の見た目の色（背景と混ざった色）を出し、中に置くラベルの文字色を決めるのに使う
- */
-export function blend(color: string, toward: string, amount: number): string {
-    const parse = (c: string) => {
-        // #RGB は #RRGGBB に広げて読む（背景が #FFF のときに混ぜられず、差の色がそのまま出ていた）
-        const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(c.trim());
-        const hex = short ? short.slice(1).map((d) => d + d).join("") : /^#([0-9a-f]{6})$/i.exec(c.trim())?.[1];
-        return hex ? parseInt(hex, 16) : null;
-    };
-    const from = parse(color);
-    const to = parse(toward);
-    if (from === null || to === null) return color;
-    const channel = (shift: number) => {
-        const a = (from >> shift) & 0xff;
-        const b = (to >> shift) & 0xff;
-        return Math.round(a + (b - a) * amount);
-    };
-    return `#${[16, 8, 0].map((shift) => channel(shift).toString(16).padStart(2, "0")).join("").toUpperCase()}`;
 }
 
 /** 比べる形の小計の色：差が 0 以上なら増加の色、マイナスなら減少の色（0 は増加に寄せる） */
@@ -586,36 +559,6 @@ export interface AxisOptions {
     end: number | null;
     /** 範囲を丸める（自動の側だけを切りのよい値にする） */
     round: boolean;
-}
-
-/** 書式の最小値・最大値の文字を数に直す。空・数でなければ null（自動） */
-export function boundOf(text: string | undefined): number | null {
-    const trimmed = (text ?? "").trim().replace(/,/g, "");
-    if (!trimmed) return null;
-    const value = Number(trimmed);
-    return Number.isFinite(value) ? value : null;
-}
-
-/** 「目盛りの本数 (目安)」の入力を本数にする。空・数でない・1 以下は 0（自動）。多すぎる指定は 20 本まで（棒グラフと同じ） */
-export function tickCountOf(text: string | undefined): number {
-    // 全角の数字も読む（「５」など）
-    const ascii = String(text ?? "").trim().replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
-    const n = Math.round(Number(ascii));
-    return Number.isFinite(n) && n >= 2 ? Math.min(20, n) : 0;
-}
-
-/**
- * 目盛りの値。本数が max を超えず、数字が同じ表示にならない（丸めで 0.005 と 0.01 がどちらも 0.01 になる、など）ように、
- * d3 の ticks の目安を max から下げていく（ticks の引数は目安で、0〜4 に 3 を渡すと 5 本返る）。棒グラフと同じ
- */
-export function ticksUpTo(domain: [number, number], max: number, labelsOf: (values: number[]) => string[]): number[] {
-    let values: number[] = [];
-    for (let count = Math.max(1, max); count >= 1; count--) {
-        values = scaleLinear().domain(domain).ticks(count);
-        const labels = labelsOf(values);
-        if (values.length <= max && new Set(labels).size === labels.length) return values;
-    }
-    return values;
 }
 
 /**
@@ -715,7 +658,7 @@ export function transform(
     const palette = host.colorPalette;
     const seriesColors = series.map((s) => {
         if (!hasSeries) return "";
-        // 保存先は「列」カードの fill（凡例の値ごとの selector 付き。棒グラフと同じ）
+        // 保存先は「列」カードの fill（凡例の値ごとの selector 付き）
         const saved = (s.group.objects?.columns?.fill as powerbi.Fill | undefined)?.solid?.color;
         return saved ? String(saved) : palette.getColor(s.name).value;
     });
@@ -1162,17 +1105,23 @@ export function transform(
     const deltaMax = maxAbs((bar) => bar.kind !== BAR_KINDS.total);
     const unitBase = deltaMax || maxAbs((bar) => bar.kind === BAR_KINDS.total);
     const unit = resolveUnit(dropdownValue(axisSettings.unitType, "auto"), unitBase, notation, axisPrecision);
-    // データ ラベルの表示単位。「Y 軸と同じ」でなければラベル自身の単位で出し、単位の語を付ける（棒グラフの合計ラベルと同じ）
+    // データ ラベルの表示単位。「Y 軸と同じ」でなければラベル自身の単位で出し、単位の語を付ける
     const labelUnitKey = dropdownValue(settings.dataLabels.unitType, "auto");
     const labelUnit = labelUnitKey === "auto" ? null : resolveUnit(labelUnitKey, unitBase, notation, labelPrecision);
-    const labelOf = (v: number) =>
+    // マイナスと 0 の書き方（▲・±0 など）。合計には + を付けない
+    const signStyle: SignStyle = {
+        negative: dropdownValue(settings.dataLabels.negativeStyle, NEGATIVE_STYLES.minus),
+        zero: dropdownValue(settings.dataLabels.zeroStyle, ZERO_STYLES.zero),
+        negativeZero: settings.dataLabels.negativeZero.value ?? true,
+        plus: settings.dataLabels.plusSign.value ?? true,
+    };
+    // 目標の線・定数線の値にも使う（+ は付けない）
+    const labelOf = (v: number, plus = false) =>
         labelUnit
-            ? `${formatValue(v, labelUnit.divisor, labelPrecision)}${labelUnit.unitWord}`
-            : formatValue(v, unit.divisor, labelPrecision);
-    const plusSign = settings.dataLabels.plusSign.value ?? true;
+            ? formatSigned(v, labelUnit.divisor, labelPrecision, { ...signStyle, plus }, labelUnit.unitWord)
+            : formatSigned(v, unit.divisor, labelPrecision, { ...signStyle, plus });
     for (const bar of bars) {
-        const text = labelOf(bar.value);
-        bar.labelText = bar.kind === BAR_KINDS.total ? text : withSign(text, bar.value, plusSign);
+        bar.labelText = labelOf(bar.value, bar.kind !== BAR_KINDS.total && signStyle.plus);
     }
 
     const ink = (color: string) => style.highContrast?.foreground ?? color;

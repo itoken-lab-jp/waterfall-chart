@@ -16,37 +16,12 @@ import CompositeCard = formattingSettings.CompositeCard;
 import Group = formattingSettings.Group;
 import Model = formattingSettings.Model;
 
-/** 表示単位。value (0〜12 の桁数) はレポートに保存されるので変えない（棒グラフと同じ値） */
-export const UNIT_TYPES: powerbi.IEnumMember[] = [
-    { value: "auto", displayName: "自動" },
-    { value: "0", displayName: "なし" },
-    { value: "1", displayName: "十" },
-    { value: "2", displayName: "百" },
-    { value: "3", displayName: "千" },
-    { value: "4", displayName: "万" },
-    { value: "5", displayName: "十万" },
-    { value: "6", displayName: "百万" },
-    { value: "7", displayName: "千万" },
-    { value: "8", displayName: "億" },
-    { value: "9", displayName: "十億" },
-    { value: "10", displayName: "百億" },
-    { value: "11", displayName: "千億" },
-    { value: "12", displayName: "兆" },
-];
+import { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS } from "./shared/units";
+import { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, LegendPosition, standardLegendPosition, legendPlacementValue } from "./shared/legend";
+import { AutoNumUpDown, itemOf } from "./shared/formatting";
+import { NEGATIVE_STYLE_ITEMS, ZERO_STYLE_ITEMS } from "./shared/numberFormat";
 
-/** value は棒グラフと同じ（"standard" = K・M・bn・T の表記） */
-export const UNIT_NOTATIONS: powerbi.IEnumMember[] = [
-    { value: "japanese", displayName: "日本語（万・億）" },
-    { value: "standard", displayName: "英語（K・M・bn）" },
-];
-
-export const PRECISIONS: powerbi.IEnumMember[] = [
-    { value: "auto", displayName: "自動" },
-    { value: "0", displayName: "0" },
-    { value: "1", displayName: "1" },
-    { value: "2", displayName: "2" },
-    { value: "3", displayName: "3" },
-];
+export { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS };
 
 /** 向き。横は項目名が長いとき */
 export const ORIENTATIONS = { vertical: "vertical", horizontal: "horizontal" } as const;
@@ -133,72 +108,10 @@ export const SUBTOTAL_STYLE_ITEMS: powerbi.IEnumMember[] = [
     { value: SUBTOTAL_STYLES.dashed, displayName: "点線の枠" },
 ];
 
-/** 凡例を描く位置（辺と寄せ）。保存値は下の LEGEND_POSITION_ITEMS（標準と同じ値）で、ここへ読み替える */
-export const LEGEND_POSITIONS = {
-    topLeft: "topLeft",
-    topCenter: "topCenter",
-    topRight: "topRight",
-    bottomLeft: "bottomLeft",
-    bottomCenter: "bottomCenter",
-    bottomRight: "bottomRight",
-    leftTop: "leftTop",
-    leftCenter: "leftCenter",
-    leftBottom: "leftBottom",
-    rightTop: "rightTop",
-    rightCenter: "rightCenter",
-    rightBottom: "rightBottom",
-} as const;
-export type LegendPosition = (typeof LEGEND_POSITIONS)[keyof typeof LEGEND_POSITIONS];
+export { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, standardLegendPosition, legendPlacementValue };
+export type { LegendPosition };
 
-/**
- * 凡例の位置の保存値は、標準のビジュアルとレポートテーマと同じ値（Top・Bottom など）にする。
- * 基本テーマ（Fluent 2 は "Bottom"）やカスタムテーマの値がそのまま届く。左下・右下は標準に無いので独自の値。
- * 棒グラフ（visuals/barChart）と同じ値
- */
-const LEGEND_POSITION_PLACEMENTS: Record<string, LegendPosition> = {
-    Top: LEGEND_POSITIONS.topLeft,
-    TopCenter: LEGEND_POSITIONS.topCenter,
-    TopRight: LEGEND_POSITIONS.topRight,
-    Bottom: LEGEND_POSITIONS.bottomLeft,
-    BottomCenter: LEGEND_POSITIONS.bottomCenter,
-    BottomRight: LEGEND_POSITIONS.bottomRight,
-    Left: LEGEND_POSITIONS.leftTop,
-    LeftCenter: LEGEND_POSITIONS.leftCenter,
-    LeftBottom: LEGEND_POSITIONS.leftBottom,
-    Right: LEGEND_POSITIONS.rightTop,
-    RightCenter: LEGEND_POSITIONS.rightCenter,
-    RightBottom: LEGEND_POSITIONS.rightBottom,
-};
-
-/** 12 通り。既定は上詰め (左) */
-export const LEGEND_POSITION_ITEMS: powerbi.IEnumMember[] = [
-    { value: "Top", displayName: "上詰め (左)" },
-    { value: "TopCenter", displayName: "上詰め (中央)" },
-    { value: "TopRight", displayName: "上詰め (右)" },
-    { value: "Bottom", displayName: "下詰め (左)" },
-    { value: "BottomCenter", displayName: "下詰め (中央)" },
-    { value: "BottomRight", displayName: "下詰め (右)" },
-    { value: "Left", displayName: "左上" },
-    { value: "LeftCenter", displayName: "左中央" },
-    { value: "LeftBottom", displayName: "左下" },
-    { value: "Right", displayName: "右上" },
-    { value: "RightCenter", displayName: "右中央" },
-    { value: "RightBottom", displayName: "右下" },
-];
-
-/** 保存値を標準の値にする。1.9 までの保存値（topLeft など）も読み替える。知らない値は undefined */
-export function standardLegendPosition(value: unknown): string | undefined {
-    if (typeof value !== "string") return undefined;
-    if (value in LEGEND_POSITION_PLACEMENTS) return value;
-    return Object.keys(LEGEND_POSITION_PLACEMENTS).find((k) => LEGEND_POSITION_PLACEMENTS[k] === value);
-}
-
-/** 保存値を、描画で使う位置（topLeft など）にする。知らない値は上詰め (左) */
-export function legendPlacementValue(value: unknown): LegendPosition {
-    return LEGEND_POSITION_PLACEMENTS[standardLegendPosition(value) ?? "Top"];
-}
-
-/** 軸のタイトルの出し方。棒グラフと同じ値 */
+/** 軸のタイトルの出し方 */
 export const TITLE_STYLES = { showTitleOnly: "showTitleOnly", showUnitOnly: "showUnitOnly", showBoth: "showBoth" } as const;
 
 export const TITLE_STYLE_ITEMS: powerbi.IEnumMember[] = [
@@ -207,7 +120,7 @@ export const TITLE_STYLE_ITEMS: powerbi.IEnumMember[] = [
     { value: TITLE_STYLES.showBoth, displayName: "両方を表示" },
 ];
 
-/** データ ラベルの位置。棒グラフと同じ値。自動と外側の上は、増えた棒の先（減った棒は下・左） */
+/** データ ラベルの位置。自動と外側の上は、増えた棒の先（減った棒は下・左） */
 export const LABEL_POSITIONS = {
     auto: "auto",
     outsideEnd: "outsideEnd",
@@ -217,7 +130,7 @@ export const LABEL_POSITIONS = {
 } as const;
 
 export const LABEL_POSITION_ITEMS: powerbi.IEnumMember[] = [
-    // 名前と並びは標準のウォーターフォールと同じ（値の名前は棒グラフと同じ）
+    // 名前と並びは標準のウォーターフォールと同じ
     { value: LABEL_POSITIONS.auto, displayName: "自動" },
     { value: LABEL_POSITIONS.insideTop, displayName: "内側上" },
     { value: LABEL_POSITIONS.outsideEnd, displayName: "外側上" },
@@ -232,14 +145,14 @@ export const LABEL_ORIENTATION_ITEMS: powerbi.IEnumMember[] = [
     { value: LABEL_ORIENTATIONS.vertical, displayName: "縦" },
 ];
 
-/** データ ラベルの表示単位。auto は Y 軸と同じ（棒グラフの合計ラベルと同じ考え方） */
+/** データ ラベルの表示単位。auto は Y 軸と同じ */
 export const LABEL_UNIT_TYPES: powerbi.IEnumMember[] = [{ value: "auto", displayName: "Y 軸と同じ" }, ...UNIT_TYPES.slice(1)];
 
 /** 既定のフォント。レポートのテーマに合わせるのが基本なので Power BI 標準と同じ並びを初期値にする */
 export const DEFAULT_FONT_FAMILY = '"Segoe UI", wf_segoe-ui_normal, helvetica, arial, sans-serif';
 
 /**
- * 軸のタイトル・凡例の文字の既定。標準のウォーターフォール（と棒グラフ）と同じ DIN 12・10（2026-09-23 に Desktop で並べて確認）。
+ * 軸のタイトル・凡例の文字の既定。標準のウォーターフォールと同じ DIN 12・10（2026-09-23 に Desktop で並べて確認）。
  * 1.8.0.0 までは 9・8 で、標準より小さかった
  */
 export const AXIS_TITLE_FONT_FAMILY = "DIN";
@@ -273,18 +186,7 @@ export function dropdownValue(slice: formattingSettings.ItemDropdown, fallback: 
     return String(raw);
 }
 
-const itemOf = (items: powerbi.IEnumMember[], value: string): powerbi.IEnumMember =>
-    items.find((i) => i.value === value) ?? items[0];
-
-/**
- * 値を空（undefined）にでき、空のとき入力欄に「自動」と出す NumUpDown（棒グラフと同じ）。
- * formattingmodel 6.0.4 の NumUpDown は placeholderText を渡さないので、ここで足す
- */
-export class AutoNumUpDown extends formattingSettings.NumUpDown {
-    getFormattingComponent(objectName: string): powerbi.visuals.NumUpDown {
-        return { ...super.getFormattingComponent(objectName), placeholderText: "自動" };
-    }
-}
+export { AutoNumUpDown };
 
 /**
  * フォント（種類・サイズ・B/I/U）。子のスライスの name が capabilities のプロパティになる。
@@ -464,11 +366,11 @@ export interface SeriesColorTarget {
 
 /**
  * 列（標準のウォーターフォールの「列」カードと同じ形）。色は空のままならテーマの色を使う
- * （viewModel が解決した色を書き戻して、ペインにも出す）。レイアウトは棒グラフと同じ名前・同じ考え方
+ * （viewModel が解決した色を書き戻して、ペインにも出す）
  */
 export class ColumnsCardSettings extends CompositeCard {
     name = "columns";
-    // 標準の日本語の表示は「列」だが、縦向き・横向きのどちらでも読めるよう「棒」にする（棒グラフと同じ。保存先は columns のまま）
+    // 標準の日本語の表示は「列」だが、縦向き・横向きのどちらでも読めるよう「棒」にする（保存先は columns のまま）
     displayName = "棒";
 
     increaseFill = new formattingSettings.ColorPicker({
@@ -528,7 +430,7 @@ export class ColumnsCardSettings extends CompositeCard {
         value: { value: "" },
     });
 
-    /** 空 = 自動（カテゴリ間のスペースの半分）。棒グラフと同じ */
+    /** 空 = 自動（カテゴリ間のスペースの半分） */
     outerPadding = new AutoNumUpDown({
         name: "outerPadding",
         displayName: "外側のパディング (%)",
@@ -542,7 +444,7 @@ export class ColumnsCardSettings extends CompositeCard {
     });
 
     /**
-     * 棒の角丸（棒グラフと同じ名前・既定 0）。棒の端を丸め、値 0 の軸に乗っている端だけ四角にする（合計は値の端だけ、浮いた増減・小計は両端）。
+     * 棒の角丸（既定 0）。棒の端を丸め、値 0 の軸に乗っている端だけ四角にする（合計は値の端だけ、浮いた増減・小計は両端）。
      * 素の numeric なので options を付けない。viewModel で 0〜30 にクランプする
      */
     cornerRadius = new formattingSettings.NumUpDown({
@@ -564,7 +466,7 @@ export class ColumnsCardSettings extends CompositeCard {
     });
 
     /**
-     * 凡例（系列）の値ごとの色。「設定の適用先」で選ぶ（棒グラフの「棒」カードと同じ作り）。保存先は columns の fill（selector 付き）。
+     * 凡例（系列）の値ごとの色。「設定の適用先」で選ぶ。保存先は columns の fill（selector 付き）。
      * 凡例に列が無いときは隠す
      */
     seriesGroup = new Group({
@@ -599,7 +501,7 @@ export class ColumnsCardSettings extends CompositeCard {
 
 /**
  * 凡例。標準と同じく「増加・減少・合計（・その他）」を出す。小計は出さない。系列があるときは系列と合計
- * （系列で積むと増減の棒は系列の色になり、増加・減少の色を使わないため）。名前は棒グラフと同じ
+ * （系列で積むと増減の棒は系列の色になり、増加・減少の色を使わないため）
  */
 export class LegendCardSettings extends CompositeCard {
     name = "legend";
@@ -691,7 +593,7 @@ export class ConnectorsCardSettings extends SimpleCard {
 }
 
 /**
- * データ ラベル。名前は棒グラフと同じ（position・orientation・fontFamily・bold・italic・color・precision・
+ * データ ラベル（保存先の名前：position・orientation・fontFamily・bold・italic・color・precision・
  * backgroundShow・backgroundColor・backgroundTransparency）。表示単位は Y 軸と別に持てる（unitType、既定は Y 軸と同じ）
  */
 export class DataLabelsCardSettings extends CompositeCard {
@@ -749,6 +651,29 @@ export class DataLabelsCardSettings extends CompositeCard {
         value: true,
     });
 
+    /** マイナスの書き方（-・▲・△・括弧）。既定は - */
+    negativeStyle = new formattingSettings.ItemDropdown({
+        name: "negativeStyle",
+        displayName: "マイナス",
+        items: NEGATIVE_STYLE_ITEMS,
+        value: NEGATIVE_STYLE_ITEMS[0],
+    });
+
+    /** 0（丸めて 0 になる値を含む）の書き方（0・±0・-）。既定は 0 */
+    zeroStyle = new formattingSettings.ItemDropdown({
+        name: "zeroStyle",
+        displayName: "0",
+        items: ZERO_STYLE_ITEMS,
+        value: ZERO_STYLE_ITEMS[0],
+    });
+
+    /** 丸めて 0 になるマイナスに符号を残す（▲0）。切ると 0 の書き方にそろえる */
+    negativeZero = new formattingSettings.ToggleSwitch({
+        name: "negativeZero",
+        displayName: "丸めて 0 のマイナスに符号",
+        value: true,
+    });
+
     rateType = new formattingSettings.ItemDropdown({
         name: "rateType",
         displayName: "率",
@@ -785,7 +710,7 @@ export class DataLabelsCardSettings extends CompositeCard {
     valuesGroup = new Group({
         name: "labelValues",
         displayName: "値",
-        slices: [this.font, this.color, this.unitType, this.precision, this.plusSign, this.rateType],
+        slices: [this.font, this.color, this.unitType, this.precision, this.plusSign, this.negativeStyle, this.zeroStyle, this.negativeZero, this.rateType],
     });
 
     /** 合計・小計の棒のラベル。既定で太字にして、増減のラベルと見分ける */
@@ -917,7 +842,7 @@ export class ConstantLineCardSettings extends SimpleCard {
     slices = [this.value, this.labelText, this.color, this.width, this.lineStyle, this.labelShow];
 }
 
-/** X 軸（横向きでは Y 軸と呼ぶ）。名前は棒グラフと同じ */
+/** X 軸（横向きでは Y 軸と呼ぶ） */
 export class CategoryAxisCardSettings extends CompositeCard {
     name = "categoryAxis";
     displayName = "X 軸";
@@ -1022,7 +947,7 @@ export class CategoryAxisCardSettings extends CompositeCard {
     groups = [this.valuesGroup, this.totalsGroup, this.titleGroup, this.layoutGroup];
 }
 
-/** Y 軸（横向きでは X 軸と呼ぶ）。名前は棒グラフと同じ（start・end・invertRange・roundRange・switchPosition など） */
+/** Y 軸（横向きでは X 軸と呼ぶ）（保存先の名前：start・end・invertRange・roundRange・switchPosition など） */
 export class ValueAxisCardSettings extends CompositeCard {
     name = "valueAxis";
     displayName = "Y 軸";
@@ -1069,7 +994,7 @@ export class ValueAxisCardSettings extends CompositeCard {
         value: true,
     });
 
-    /** 目盛り（グリッド線）の本数の目安（棒グラフと同じ）。空なら自動（描く範囲の長さで決める） */
+    /** 目盛り（グリッド線）の本数の目安。空なら自動（描く範囲の長さで決める） */
     tickCount = new formattingSettings.TextInput({
         name: "tickCount",
         displayName: "目盛りの本数 (目安)",
@@ -1191,7 +1116,7 @@ export class ValueAxisCardSettings extends CompositeCard {
     groups = [this.rangeGroup, this.valuesGroup, this.titleGroup, this.unitGroup];
 }
 
-/** グリッド線（値の軸の目盛りの線）。名前・既定は棒グラフの「横」と同じ（標準の既定は点線） */
+/** グリッド線（値の軸の目盛りの線）。既定は標準と同じ点線 */
 export class GridlinesCardSettings extends SimpleCard {
     name = "gridlines";
     displayName = "グリッド線";
@@ -1271,7 +1196,7 @@ export class VisualFormattingSettingsModel extends Model {
     gridlines = new GridlinesCardSettings();
 
     /**
-     * 並びは棒グラフ・標準にそろえる：形の設定 → X 軸 → Y 軸 → 凡例 → グリッド線 → 列 → その他 → つなぎの線 →
+     * 並びは標準にそろえる：形の設定 → X 軸 → Y 軸 → 凡例 → グリッド線 → 列 → その他 → つなぎの線 →
      * データ ラベル → 目標の線。定数線は分析ペイン（analyticsPane）
      */
     cards = [
@@ -1289,7 +1214,7 @@ export class VisualFormattingSettingsModel extends Model {
     ];
 
     /**
-     * 基本テーマ・カスタムテーマに合わせる（棒グラフと同じ）。テーマは標準のビジュアルの名前（showAxisTitle・showTitle）で
+     * 基本テーマ・カスタムテーマに合わせる。テーマは標準のビジュアルの名前（showAxisTitle・showTitle）で
      * 値を持つので、capabilities にその名前も置いて受け取り、作り手が自作の設定（titleShow）を保存していないときの既定にする。
      * 書式ペインにも同じ値を出す。populate の直後に呼ぶ。凡例の位置は 1.9 までの保存値（topLeft など）を標準の値に読み替える
      */

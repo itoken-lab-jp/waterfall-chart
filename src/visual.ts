@@ -12,6 +12,7 @@ import { FormattingSettingsService } from "powerbi-visuals-utils-formattingmodel
 import "./../style/visual.less";
 import { App } from "./App";
 import { VisualFormattingSettingsModel } from "./settings";
+import { toRootCoordinates } from "./shared/tooltip";
 import { LOADING_NOTICE, TRUNCATED_NOTICE, TooltipTarget, transform, ViewModel } from "./viewModel";
 
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
@@ -123,9 +124,8 @@ export class Visual implements IVisual {
     /** ツールヒント。中身は viewModel が組んだもの。棒は selectionId を渡す（ドリルスルーが対象の行を知るため）。目標の線は名前と値だけ */
     private showTooltip(target: TooltipTarget, clientX: number, clientY: number, move: boolean): void {
         if (!this.tooltipService.enabled()) return;
-        const rect = this.element.getBoundingClientRect();
         const options = {
-            coordinates: [clientX - rect.left - this.element.clientLeft, clientY - rect.top - this.element.clientTop],
+            coordinates: toRootCoordinates(clientX, clientY, this.element),
             isTouchEvent: false,
             dataItems: target.tooltip,
             identities: target.selectionIds,

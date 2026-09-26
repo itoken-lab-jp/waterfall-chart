@@ -8,7 +8,7 @@
  *   （スクロールしない。凡例のほかはマウスを通す）
  * - 選択：棒・凡例の系列をクリック（Ctrl で追加）、背景で解除。右クリックでコンテキスト メニュー
  * - キーボード：Tab で棒と凡例の系列をたどり、Enter・Space で選ぶ、Esc で解除
- * - ハイライト：該当しない棒を薄く描き、該当分を通常の濃さで重ねる（棒グラフと同じ見せ方）
+ * - ハイライト：該当しない棒を薄く描き、該当分を通常の濃さで重ねる
  * - ハイコントラスト：前景色と背景色だけで描き、増減は線の種類で見分ける
  */
 
@@ -23,7 +23,7 @@ import ISelectionId = powerbi.visuals.ISelectionId;
 
 export { layoutOf } from "./layout";
 
-/** 選んでいない棒・ハイライトに該当しない分の濃さ（棒グラフと同じ） */
+/** 選んでいない棒・ハイライトに該当しない分の濃さ */
 export const DIM_OPACITY = 0.35;
 /** 透かして描く棒（比べる形の小計）を薄めたときの下限。透かした濃さにさらに DIM_OPACITY を掛けると消えそうになるため */
 export const MIN_DIM_OPACITY = 0.2;
@@ -430,7 +430,7 @@ export const App: React.FC<AppProps> = ({
                                             strokeDasharray={item.line.dash ?? undefined}
                                         />
                                     ) : (
-                                        // 棒に角丸があれば、印も値の向きの端（縦向きは上、横向きは右）を丸める（棒グラフと同じ）
+                                        // 棒に角丸があれば、印も値の向きの端（縦向きは上、横向きは右）を丸める
                                         barShape(
                                             { x, y, width: swatchWidth, height: 10 },
                                             style.columns.cornerRadius > 0

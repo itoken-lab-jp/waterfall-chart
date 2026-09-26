@@ -19,11 +19,15 @@ import { FontSpec, measureTextWidth, readableText, truncateStartToWidth, truncat
 import { BREAK_STYLES, LABEL_POSITIONS, ORIENTATIONS } from "./settings";
 import { LEVEL_SEPARATOR } from "./data";
 import { Candidate, LabelRequest, Obstacle, placeLabels } from "./placement";
+import { PT_TO_PX } from "./shared/text";
+import { legendPlacement } from "./shared/legend";
+import { recommendedTickCount } from "./shared/ticks";
+
+export { PT_TO_PX, recommendedTickCount };
 
 import IViewport = powerbi.IViewport;
 
 /** 書式の文字サイズはポイント。SVG にはピクセルで渡す */
-export const PT_TO_PX = 4 / 3;
 export const FONT_FAMILY = '"Segoe UI", wf_segoe-ui_normal, helvetica, arial, sans-serif';
 /** 軸を切ったとき、切った側の端にとる印の余白 */
 export const BREAK_ZONE = 16;
@@ -41,7 +45,7 @@ const NOTICE_HEIGHT = 16;
  * ビジュアルはビューの外（上）には描いていない（.wf-container が viewport の大きさで overflow: hidden）
  */
 const TOP_MARGIN = 8;
-/** 下の凡例の上の隙間（px）。項目名・X 軸のタイトルと凡例をくっつけない（標準・棒グラフと同じくらい。1.11 まではなし） */
+/** 下の凡例の上の隙間（px）。項目名・X 軸のタイトルと凡例をくっつけない（標準と同じくらい。1.11 まではなし） */
 const LEGEND_GAP_BOTTOM = 10;
 const legendGapBottom = (height: number) => Math.max(0, Math.min(LEGEND_GAP_BOTTOM, (height - 150) / 5));
 const LEGEND_SWATCH = 10;
@@ -99,10 +103,10 @@ export interface Corner {
 }
 
 /**
- * 棒（区画）の path。corner があれば、その端（sides）の角だけを丸める（棒グラフと同じ二次曲線）。
+ * 棒（区画）の path。corner があれば、その端（sides）の角だけを丸める（二次曲線）。
  * corner が無い・半径が 0 なら長方形
  */
-/** 実際に描く角の半径。棒の太さの半分と、長さ（両端を丸めるなら長さの半分）まで（棒グラフと同じ考え方）。丸めなければ 0 */
+/** 実際に描く角の半径。棒の太さの半分と、長さ（両端を丸めるなら長さの半分）まで。丸めなければ 0 */
 export function cornerRadiusOf(r: Rect, corner: Corner | null): number {
     if (!corner || !corner.sides.length) return 0;
     const has = (side: CornerSide) => corner.sides.includes(side);
@@ -283,22 +287,6 @@ export function breakMark(style: string, horizontal: boolean, center: number, u0
     };
 }
 
-type Side = "top" | "bottom" | "left" | "right";
-
-/** 凡例の位置（topLeft など）を、置く辺と寄せ方に分ける */
-function legendPlacement(position: string): { side: Side; align: "start" | "center" | "end" } {
-    const side: Side = position.startsWith("bottom")
-        ? "bottom"
-        : position.startsWith("left")
-          ? "left"
-          : position.startsWith("right")
-            ? "right"
-            : "top";
-    const rest = position.replace(/^(top|bottom|left|right)/, "").toLowerCase();
-    const align = rest === "center" ? "center" : rest === "right" || rest === "bottom" ? "end" : "start";
-    return { side, align };
-}
-
 /** 背景の長方形（(x, y) を原点に、回す前の座標）。文字の寄せ方と行数から出す */
 function backgroundOf(
     lines: string[],
@@ -321,15 +309,6 @@ const hitsBox = (a: Rect, b: Rect): boolean =>
 
 /** 四角を障害物にする */
 const asBox = (box: Rect): Obstacle => ({ kind: "box", box });
-
-/**
- * 値の軸の目盛りの本数の上限。標準（powerbi-visuals-utils-chartutils の getRecommendedNumberOfTicksForYAxis・ForXAxis）と同じ。
- * 縦の軸は高さ、横の軸は幅で決める
- */
-export function recommendedTickCount(length: number, axis: "vertical" | "horizontal"): number {
-    const [small, medium] = axis === "vertical" ? [150, 300] : [300, 500];
-    return length < small ? 3 : length < medium ? 5 : 8;
-}
 
 /** 点線の枠の小計の地の濃さ（差の色を背景に混ぜる割合） */
 const SUBTOTAL_TINT = 0.15;
@@ -493,7 +472,7 @@ function layoutWith(
           )
         : 0;
 
-    // 項目の方向の並び（標準・棒グラフと同じ：外側のパディングとカテゴリ間のスペース）
+    // 項目の方向の並び（標準と同じ：外側のパディングとカテゴリ間のスペース）
     const pad = style.columns.categorySpacing / 100;
     const outer = style.columns.outerPadding === null ? pad / 2 : style.columns.outerPadding / 100;
     const minWidth = style.categoryAxis.minCategoryWidth;
@@ -543,13 +522,13 @@ function layoutWith(
         } else {
             rotated = true;
             step = Math.max(1, Math.ceil((categorySize * 1.45) / categoryStep));
-            // 上限を大きくしても、描く範囲に高さの 4 分の 1 は残す（棒グラフと同じ。1.11 までは 100% で描く範囲が無くなり、何も描かなかった）
+            // 上限を大きくしても、描く範囲に高さの 4 分の 1 は残す（1.11 までは 100% で描く範囲が無くなり、何も描かなかった）
             const room = H * 0.75 - top - nearRoom - ROTATED_GAP - categorySize * 0.5 - categoryTitleSize - reserve.bottom - noticeHeight - (scrollAxis ? SCROLLBAR : 0);
             const maxLength = Math.max(0, Math.min(H * style.categoryAxis.maxShare, room)) / SIN45;
             const longest = Math.max(0, ...bars.map((b) => measureTextWidth(pathOf(b), specOf(categoryFontOf(b)))));
             const length = Math.min(longest, maxLength);
             // 斜めの名前は (中心, 下端 + 8) を右端に -45° 回す。縦の広がりは長さ × sin45 と、文字の下側の少し
-            // （棒グラフと同じ見積もり：棒との間隔 8 ＋ 長さ × sin45 ＋ 文字の半分）
+            // （見積もり：棒との間隔 8 ＋ 長さ × sin45 ＋ 文字の半分）
             categoryHeight = ROTATED_GAP + length * SIN45 + categorySize * 0.5;
             categoryTexts = bars.map((b) => ({
                 lines: [truncateStartToWidth(pathOf(b), length, specOf(categoryFontOf(b)))],
@@ -575,7 +554,7 @@ function layoutWith(
         plot = { x: left, y: top, width, height: H - top - bottomReserve };
     } else {
         const tickHeight = style.valueAxis.show ? tickFont.size + 8 : 4;
-        // 単位のラベルは値の軸の側（下なら目盛りとタイトルの下、上ならその上）に 1 行とる（棒グラフの横棒と同じ）
+        // 単位のラベルは値の軸の側（下なら目盛りとタイトルの下、上ならその上）に 1 行とる
         const top = reserve.top + (switchAxis ? badgeHeight : 0) + referenceLabelRoom + 4 + (switchAxis ? tickHeight + valueTitleSize : 0);
         const bottom = reserve.bottom + noticeHeight + (switchAxis ? 4 : tickHeight + valueTitleSize + badgeHeight);
         const height0 = H - top - bottom;
@@ -661,7 +640,7 @@ function layoutWith(
 
     /**
      * 角を丸める端。棒の端（いちばん上・下）を丸め、値 0 の軸に乗っている端だけ四角にする
-     * （棒グラフと同じく、四角い端は「軸に乗っている」と読める）。合計は値の端だけ、浮いた増減・小計は両端
+     * （四角い端は「軸に乗っている」と読める）。合計は値の端だけ、浮いた増減・小計は両端
      * （2026-09-24 ユーザーと決定。片側だけ丸めると、四角い側が何かに乗っているように見える）。
      * 系列で積むときは、棒の端に届く外側の区画の、その端だけ。軸の範囲の外で切れた端は、そこが本当の端ではないので丸めない
      */
@@ -684,7 +663,7 @@ function layoutWith(
             // 該当分が 0（highlightTo = from）のハイライトは 1px の帯になる。丸めた端に四角い帯を重ねないよう、そのときは描かない
             const highlight = highlightTo === null || (highlightTo === from && roundFrom) ? null : rectOf(from, highlightTo, k);
             // ハイライトの該当分は、積み始めの端は区画と同じに、該当分の終わりは、区画の外側の端に当たる区画のときに丸める
-            // （棒グラフと同じく値の端を丸める）。終わりが 0・軸の範囲の外なら四角
+            // （値の端を丸める）。終わりが 0・軸の範囲の外なら四角
             const roundHighlightEnd =
                 highlight !== null && highlightTo !== null && highlightTo !== from && outerEnd(to, low, high) && highlightTo !== 0 && inRange(highlightTo);
             const cornerOf = (sides: CornerSide[]): Corner | null =>
@@ -882,7 +861,7 @@ function layoutWith(
     let valueTitleLayout: TextLayout | null = null;
     if (valueTitle && valueTitleFont) {
         if (!horizontal) {
-            // 左右どちらも -90°（下から上へ読む。棒グラフと同じ）。-90° の文字は、ベースラインから左へ文字の上側（0.8 文字）、
+            // 左右どちらも -90°（下から上へ読む）。-90° の文字は、ベースラインから左へ文字の上側（0.8 文字）、
             // 右へ下側（0.22 文字）が出る。右に置くときは下側が右端に届くように置く
             // （1.3.0.0 までは右を 90° にし、文字の上側が右へ出るのにベースラインを 0.3 文字しか内側にせず、右端で切れていた）
             const x = switchAxis ? W - reserve.right - 4 - valueTitleFont.size * 0.22 : reserve.left + 4 + valueTitleFont.size * 0.8;
@@ -991,9 +970,9 @@ function layoutWith(
         legend = { title, items, font: legendFont };
     }
 
-    // 単位のラベル：縦向きは値の軸の目盛りの列にそろえて、描く範囲の上に置く（棒グラフと同じ）。
+    // 単位のラベル：縦向きは値の軸の目盛りの列にそろえて、描く範囲の上に置く。
     // 軸のタイトルは描く範囲の高さに収めてあるので、上の単位とは重ならない。
-    // 横向きは値の軸の端（右）にそろえ、値の軸が下なら目盛りとタイトルの下、上ならその上に置く（棒グラフの横棒と同じ。1.11 までは左上）
+    // 横向きは値の軸の端（右）にそろえ、値の軸が下なら目盛りとタイトルの下、上ならその上に置く（1.11 までは左上）
     let badge: TextLayout | null = null;
     if (badgeHeight) {
         const badgeWidth = measureTextWidth(viewModel.unitBadge, specOf(tickFont));
