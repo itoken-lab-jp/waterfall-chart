@@ -49,7 +49,7 @@ import {
 import { Formatter, LEVEL_SEPARATOR, ParsedItem, Parsed, parse } from "./data";
 import { formatValue, resolveUnit, unitBadgeOf } from "./unitUtils";
 import { ticksUpTo, tickCountOf, boundOf } from "./shared/ticks";
-import { gridDashOf } from "./shared/gridlines";
+import { gridDashOf, lineCapOf, CUSTOM_LINE_STYLE } from "./shared/gridlines";
 import { SCROLL_STARTS } from "./shared/scrollStart";
 import { blend } from "./shared/color";
 import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
@@ -240,7 +240,7 @@ export interface ViewStyle {
     };
     /** tickCount：目盛りの本数の目安。0 なら自動（描く範囲の長さで決める） */
     valueAxis: { show: boolean; font: TextStyle; switchPosition: boolean; invert: boolean; title: AxisTitle | null; tickCount: number };
-    gridlines: { show: boolean; color: string; opacity: number; width: number; dash: string | null };
+    gridlines: { show: boolean; color: string; opacity: number; width: number; dash: string | null; cap?: "round" | "square" | "butt" };
     legend: { show: boolean; position: LegendPosition; font: TextStyle; title: string };
     /** cornerRadius：棒の角丸（px）。0 なら丸めない */
     columns: { categorySpacing: number; outerPadding: number | null; cornerRadius: number };
@@ -357,6 +357,11 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
     const connectorWidth = clamp(Number(settings.connectors.width.value) || 1, 0.5, 10);
     const labels = settings.dataLabels;
     const gridWidth = clamp(Number(settings.gridlines.horizontalWidth.value) || 1, 0.5, 10);
+    const gridStyle = dropdownValue(settings.gridlines.horizontalStyle, LINE_STYLES.dotted);
+    const gridCustom = {
+        dashArray: settings.gridlines.horizontalDashArray.value ?? "",
+        dashCap: dropdownValue(settings.gridlines.horizontalDashCap, "none"),
+    };
     const outerPadding = settings.columns.outerPadding.value;
     const subtotalValue = dropdownValue(settings.columns.subtotalStyle, SUBTOTAL_STYLES.outline);
     const subtotalStyle: SubtotalStyle = (Object.values(SUBTOTAL_STYLES) as string[]).includes(subtotalValue)
@@ -417,11 +422,9 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
             color: ink(colorOf(settings.gridlines.horizontalColor) || "#E1DFDD"),
             opacity: hc ? 0.5 : 1 - clamp(Number(settings.gridlines.horizontalTransparency.value) || 0, 0, 100) / 100,
             width: gridWidth,
-            dash: gridDashOf(
-                dropdownValue(settings.gridlines.horizontalStyle, LINE_STYLES.dotted),
-                gridWidth,
-                settings.gridlines.horizontalScaleWithWidth.value ?? false
-            ),
+            dash: gridDashOf(gridStyle, gridWidth, settings.gridlines.horizontalScaleWithWidth.value ?? false, gridCustom),
+            // 点線（細かい点）は丸い端。カスタムはダッシュ キャップ
+            cap: gridStyle === CUSTOM_LINE_STYLE ? lineCapOf(gridStyle, gridCustom) : undefined,
         },
         legend: {
             show: settings.legend.show.value ?? true,

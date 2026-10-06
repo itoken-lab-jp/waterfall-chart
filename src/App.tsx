@@ -218,7 +218,7 @@ export const App: React.FC<AppProps> = ({
                                     strokeWidth={style.gridlines.width}
                                     strokeOpacity={style.gridlines.opacity}
                                     strokeDasharray={style.gridlines.dash ?? undefined}
-                                    strokeLinecap={style.gridlines.dash === "1 3" ? "round" : undefined}
+                                    strokeLinecap={style.gridlines.cap ?? (style.gridlines.dash === "1 3" ? "round" : undefined)}
                                 />
                             ))}
 

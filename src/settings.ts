@@ -21,6 +21,7 @@ import { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, LegendPosition, standardLegend
 import { AutoNumUpDown, itemOf } from "./shared/formatting";
 import { SCROLL_START_ITEMS } from "./shared/scrollStart";
 import { NEGATIVE_STYLE_ITEMS, ZERO_STYLE_ITEMS, SIGN_TONE_MODE_ITEMS, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
+import { legendParts, gridlineParts, categoryAxisParts, valueAxisParts, labelValueParts, labelBackgroundParts } from "./shared/formatCards";
 
 export { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS };
 
@@ -517,50 +518,17 @@ export class LegendCardSettings extends CompositeCard {
     name = "legend";
     displayName = "凡例";
 
-    show = new formattingSettings.ToggleSwitch({
-        name: "show",
-        displayName: "凡例",
-        value: true,
-    });
-
+    private parts = legendParts({ showDisplayName: "凡例", titleShow: false, font: { controlName: "fontControl", displayName: "フォント", size: LEGEND_FONT_SIZE, family: DEFAULT_FONT_FAMILY } });
+    show = this.parts.show;
     topLevelSlice = this.show;
-
-    position = new formattingSettings.ItemDropdown({
-        name: "position",
-        displayName: "位置",
-        items: LEGEND_POSITION_ITEMS,
-        value: LEGEND_POSITION_ITEMS[0],
-    });
-
-    font = fontControl("", "フォント", LEGEND_FONT_SIZE);
-
-    labelColor = new formattingSettings.ColorPicker({
-        name: "labelColor",
-        displayName: "カラー",
-        value: { value: "#605E5C" },
-    });
-
-    titleShow = new formattingSettings.ToggleSwitch({
-        name: "titleShow",
-        displayName: "タイトル",
-        value: false,
-    });
-
-    titleText = new formattingSettings.TextInput({
-        name: "titleText",
-        displayName: "タイトル テキスト",
-        value: "",
-        placeholder: "自動",
-    });
-
-    optionsGroup = new Group({ name: "legendOptions", displayName: "オプション", slices: [this.position] });
-    textGroup = new Group({ name: "legendText", displayName: "テキスト", slices: [this.font, this.labelColor] });
-    titleGroup = new Group({
-        name: "legendTitle",
-        displayName: "タイトル",
-        topLevelSlice: this.titleShow,
-        slices: [this.titleText],
-    });
+    position = this.parts.position;
+    font = this.parts.font;
+    labelColor = this.parts.labelColor;
+    titleShow = this.parts.titleShow;
+    titleText = this.parts.titleText;
+    optionsGroup = this.parts.optionsGroup;
+    textGroup = this.parts.textGroup;
+    titleGroup = this.parts.titleGroup;
 
     groups = [this.optionsGroup, this.textGroup, this.titleGroup];
 }
@@ -610,6 +578,21 @@ export class DataLabelsCardSettings extends CompositeCard {
     name = "dataLabels";
     displayName = "データ ラベル";
 
+    private values = labelValueParts({
+        precisions: PRECISIONS,
+        negativeStyles: NEGATIVE_STYLE_ITEMS,
+        zeroStyles: ZERO_STYLE_ITEMS,
+        toneModes: SIGN_TONE_MODE_ITEMS,
+        goodColor: DEFAULT_GOOD_COLOR,
+        badColor: DEFAULT_BAD_COLOR,
+    });
+    private background = labelBackgroundParts({
+        showDisplayName: "背景",
+        colorDisplayName: "カラー",
+        color: DEFAULT_LABEL_BACKGROUND,
+        transparency: DEFAULT_LABEL_BACKGROUND_TRANSPARENCY,
+    });
+
     show = new formattingSettings.ToggleSwitch({
         name: "show",
         displayName: "データ ラベル",
@@ -634,12 +617,7 @@ export class DataLabelsCardSettings extends CompositeCard {
 
     font = fontControl("", "フォント", 9);
 
-    /** 空 = 自動（棒の外は灰色、棒の中は棒の色に合わせて白か黒） */
-    color = new formattingSettings.ColorPicker({
-        name: "color",
-        displayName: "カラー",
-        value: { value: "" },
-    });
+    color = this.values.color;
 
     unitType = new formattingSettings.ItemDropdown({
         name: "unitType",
@@ -648,12 +626,7 @@ export class DataLabelsCardSettings extends CompositeCard {
         value: LABEL_UNIT_TYPES[0],
     });
 
-    precision = new formattingSettings.ItemDropdown({
-        name: "precision",
-        displayName: "小数点以下の桁数",
-        items: PRECISIONS,
-        value: PRECISIONS[0],
-    });
+    precision = this.values.precision;
 
     plusSign = new formattingSettings.ToggleSwitch({
         name: "plusSign",
@@ -661,49 +634,12 @@ export class DataLabelsCardSettings extends CompositeCard {
         value: true,
     });
 
-    /** マイナスの書き方（-・▲・△・括弧）。既定は - */
-    negativeStyle = new formattingSettings.ItemDropdown({
-        name: "negativeStyle",
-        displayName: "マイナス",
-        items: NEGATIVE_STYLE_ITEMS,
-        value: NEGATIVE_STYLE_ITEMS[0],
-    });
-
-    /** 0（丸めて 0 になる値を含む）の書き方（0・±0・-）。既定は 0 */
-    zeroStyle = new formattingSettings.ItemDropdown({
-        name: "zeroStyle",
-        displayName: "0",
-        items: ZERO_STYLE_ITEMS,
-        value: ZERO_STYLE_ITEMS[0],
-    });
-
-    /** 丸めて 0 になるマイナスに符号を残す（▲0）。切ると 0 の書き方にそろえる */
-    negativeZero = new formattingSettings.ToggleSwitch({
-        name: "negativeZero",
-        displayName: "丸めて 0 のマイナスに符号",
-        value: true,
-    });
-
-    /** 増減の値の文字を符号で塗る（色なし・マイナスだけ・プラスとマイナス）。既定は色なし（今までの色）。合計には効かない */
-    toneMode = new formattingSettings.ItemDropdown({
-        name: "toneMode",
-        displayName: "符号の色",
-        description: "棒の外のラベルと、背景を付けたラベルに効く。棒の中のラベルは、棒の色に合わせて読める色を自動で選ぶ",
-        items: SIGN_TONE_MODE_ITEMS,
-        value: SIGN_TONE_MODE_ITEMS[0],
-    });
-
-    positiveColor = new formattingSettings.ColorPicker({
-        name: "positiveColor",
-        displayName: "プラスの色",
-        value: { value: DEFAULT_GOOD_COLOR },
-    });
-
-    negativeColor = new formattingSettings.ColorPicker({
-        name: "negativeColor",
-        displayName: "マイナスの色",
-        value: { value: DEFAULT_BAD_COLOR },
-    });
+    negativeStyle = this.values.negativeStyle;
+    zeroStyle = this.values.zeroStyle;
+    negativeZero = this.values.negativeZero;
+    toneMode = this.values.toneMode;
+    positiveColor = this.values.positiveColor;
+    negativeColor = this.values.negativeColor;
 
     rateType = new formattingSettings.ItemDropdown({
         name: "rateType",
@@ -713,24 +649,9 @@ export class DataLabelsCardSettings extends CompositeCard {
         value: RATE_TYPE_ITEMS[0],
     });
 
-    backgroundShow = new formattingSettings.ToggleSwitch({
-        name: "backgroundShow",
-        displayName: "背景",
-        value: false,
-    });
-
-    /** 既定は標準と同じ黒・透過性 90%（棒の色の上にうっすら暗い四角が乗る）。1.7.1.0 までは白・0% */
-    backgroundColor = new formattingSettings.ColorPicker({
-        name: "backgroundColor",
-        displayName: "カラー",
-        value: { value: DEFAULT_LABEL_BACKGROUND },
-    });
-
-    backgroundTransparency = new formattingSettings.NumUpDown({
-        name: "backgroundTransparency",
-        displayName: "透過性 (%)",
-        value: DEFAULT_LABEL_BACKGROUND_TRANSPARENCY,
-    });
+    backgroundShow = this.background.backgroundShow;
+    backgroundColor = this.background.backgroundColor;
+    backgroundTransparency = this.background.backgroundTransparency;
 
     optionsGroup = new Group({
         name: "labelOptions",
@@ -878,76 +799,30 @@ export class CategoryAxisCardSettings extends CompositeCard {
     name = "categoryAxis";
     displayName = "X 軸";
 
-    show = new formattingSettings.ToggleSwitch({
-        name: "show",
-        displayName: "値",
-        value: true,
+    private parts = categoryAxisParts({
+        font: { controlName: "fontControl", displayName: "フォント", size: 9, family: DEFAULT_FONT_FAMILY },
+        titleFont: { controlName: "titleControl", prefix: "title", displayName: "フォント", size: AXIS_TITLE_FONT_SIZE, family: AXIS_TITLE_FONT_FAMILY },
+        titleStyleItems: TITLE_STYLE_ITEMS,
+        scrollStartItems: SCROLL_START_ITEMS,
+        sliders: false,
     });
-
-    font = fontControl("", "フォント", 9);
-
-    labelColor = new formattingSettings.ColorPicker({
-        name: "labelColor",
-        displayName: "カラー",
-        value: { value: "#605E5C" },
-    });
-
-    /** 項目名に使う大きさの上限（ビュー全体に対する %）。縦向きは高さ、横向きは幅。素の numeric なので描画側でクランプ */
-    maxHeight = new formattingSettings.NumUpDown({
-        name: "maxHeight",
-        displayName: "高さの最大値 (%)",
-        value: 25,
-    });
-
-    /** カテゴリの軸のタイトルは初期オフ（2026-09-23 決定）。縦横どちらの向きでもこの card に当てる。数値の軸は初期オンのまま */
-    titleShow = new formattingSettings.ToggleSwitch({
-        name: "titleShow",
-        displayName: "タイトル",
-        value: false,
-    });
-
-    titleText = new formattingSettings.TextInput({
-        name: "titleText",
-        displayName: "タイトル テキスト",
-        value: "",
-        placeholder: "自動",
-    });
-
-    titleStyle = new formattingSettings.ItemDropdown({
-        name: "titleStyle",
-        displayName: "スタイル",
-        items: TITLE_STYLE_ITEMS,
-        value: TITLE_STYLE_ITEMS[0],
-    });
-
-    titleFont = fontControl("title", "フォント", AXIS_TITLE_FONT_SIZE, false, AXIS_TITLE_FONT_FAMILY);
-
-    titleColor = new formattingSettings.ColorPicker({
-        name: "titleColor",
-        displayName: "カラー",
-        value: { value: "#252423" },
-    });
-
-    /** 帯がこれより狭くなるときは、スクロールする（標準と同じ）。0 でスクロールしない */
-    minCategoryWidth = new formattingSettings.NumUpDown({
-        name: "minCategoryWidth",
-        displayName: "カテゴリの最小幅 (px)",
-        value: 20,
-    });
-
-    /** はみ出してスクロールするとき、開いたときにどこから見せるか。末尾は最後の棒の側 */
-    scrollStart = new formattingSettings.ItemDropdown({
-        name: "scrollStart",
-        displayName: "スクロールの最初の位置",
-        items: SCROLL_START_ITEMS,
-        value: SCROLL_START_ITEMS[0],
-    });
+    show = this.parts.show;
+    font = this.parts.font;
+    labelColor = this.parts.labelColor;
+    maxHeight = this.parts.maxHeight;
+    titleShow = this.parts.titleShow;
+    titleText = this.parts.titleText;
+    titleStyle = this.parts.titleStyle;
+    titleFont = this.parts.titleFont;
+    titleColor = this.parts.titleColor;
+    minCategoryWidth = this.parts.minCategoryWidth;
+    scrollStart = this.parts.scrollStart;
 
     valuesGroup = new Group({
         name: "categoryValues",
         displayName: "値",
         topLevelSlice: this.show,
-        slices: [this.font, this.labelColor, this.maxHeight],
+        slices: this.parts.valueSlices,
     });
 
     /**
@@ -970,18 +845,8 @@ export class CategoryAxisCardSettings extends CompositeCard {
         slices: [this.totalFont, this.totalColor],
     });
 
-    titleGroup = new Group({
-        name: "categoryTitle",
-        displayName: "タイトル",
-        topLevelSlice: this.titleShow,
-        slices: [this.titleText, this.titleStyle, this.titleFont, this.titleColor],
-    });
-
-    layoutGroup = new Group({
-        name: "categoryLayout",
-        displayName: "レイアウト",
-        slices: [this.minCategoryWidth, this.scrollStart],
-    });
+    titleGroup = this.parts.titleGroup;
+    layoutGroup = this.parts.layoutGroup;
 
     groups = [this.valuesGroup, this.totalsGroup, this.titleGroup, this.layoutGroup];
 }
@@ -991,20 +856,20 @@ export class ValueAxisCardSettings extends CompositeCard {
     name = "valueAxis";
     displayName = "Y 軸";
 
-    start = new formattingSettings.TextInput({
-        name: "start",
-        displayName: "最小値",
-        description: "入れると軸を切る・0 から描くより優先する。0 より大きい値なら、合計の棒に切った印を付ける",
-        value: "",
-        placeholder: "自動",
+    private parts = valueAxisParts({
+        font: { controlName: "fontControl", displayName: "フォント", size: 9, family: DEFAULT_FONT_FAMILY },
+        titleFont: { controlName: "titleControl", prefix: "title", displayName: "フォント", size: AXIS_TITLE_FONT_SIZE, family: AXIS_TITLE_FONT_FAMILY },
+        titleStyleItems: TITLE_STYLE_ITEMS,
+        unitTypeItems: UNIT_TYPES,
+        unitNotationItems: UNIT_NOTATIONS,
+        precisionItems: PRECISIONS,
+        startDescription: "入れると軸を切る・0 から描くより優先する。0 より大きい値なら、合計の棒に切った印を付ける",
+        tickCountDescription: "空なら自動。数を入れると、その本数以内で切りのいい目盛りにする（数字が重なるなら間引く）",
+        unitTypeDescription: "自動は増減の大きさで決める。データ ラベルは既定でこの単位",
     });
 
-    end = new formattingSettings.TextInput({
-        name: "end",
-        displayName: "最大値",
-        value: "",
-        placeholder: "自動",
-    });
+    start = this.parts.start;
+    end = this.parts.end;
 
     startAtZero = new formattingSettings.ToggleSwitch({
         name: "startAtZero",
@@ -1021,109 +886,23 @@ export class ValueAxisCardSettings extends CompositeCard {
         value: BREAK_STYLE_ITEMS[0],
     });
 
-    invertRange = new formattingSettings.ToggleSwitch({
-        name: "invertRange",
-        displayName: "範囲の反転",
-        value: false,
-    });
-
-    roundRange = new formattingSettings.ToggleSwitch({
-        name: "roundRange",
-        displayName: "範囲を丸める",
-        value: true,
-    });
-
-    /** 目盛り（グリッド線）の本数の目安。空なら自動（描く範囲の長さで決める） */
-    tickCount = new formattingSettings.TextInput({
-        name: "tickCount",
-        displayName: "目盛りの本数 (目安)",
-        description: "空なら自動。数を入れると、その本数以内で切りのいい目盛りにする（数字が重なるなら間引く）",
-        value: "",
-        placeholder: "自動",
-    });
-
-    show = new formattingSettings.ToggleSwitch({
-        name: "show",
-        displayName: "値",
-        value: true,
-    });
-
-    font = fontControl("", "フォント", 9);
-
-    labelColor = new formattingSettings.ColorPicker({
-        name: "labelColor",
-        displayName: "カラー",
-        value: { value: "#605E5C" },
-    });
-
-    unitType = new formattingSettings.ItemDropdown({
-        name: "unitType",
-        displayName: "表示単位",
-        description: "自動は増減の大きさで決める。データ ラベルは既定でこの単位",
-        items: UNIT_TYPES,
-        value: UNIT_TYPES[0],
-    });
-
-    unitNotation = new formattingSettings.ItemDropdown({
-        name: "unitNotation",
-        displayName: "単位の表記",
-        items: UNIT_NOTATIONS,
-        value: UNIT_NOTATIONS[0],
-    });
-
-    precision = new formattingSettings.ItemDropdown({
-        name: "precision",
-        displayName: "小数点以下の桁数",
-        items: PRECISIONS,
-        value: PRECISIONS[0],
-    });
-
-    switchPosition = new formattingSettings.ToggleSwitch({
-        name: "switchPosition",
-        displayName: "軸の位置を切り替える",
-        value: false,
-    });
-
-    titleShow = new formattingSettings.ToggleSwitch({
-        name: "titleShow",
-        displayName: "タイトル",
-        value: true,
-    });
-
-    titleText = new formattingSettings.TextInput({
-        name: "titleText",
-        displayName: "タイトル テキスト",
-        value: "",
-        placeholder: "自動",
-    });
-
-    titleStyle = new formattingSettings.ItemDropdown({
-        name: "titleStyle",
-        displayName: "スタイル",
-        items: TITLE_STYLE_ITEMS,
-        value: TITLE_STYLE_ITEMS[0],
-    });
-
-    titleFont = fontControl("title", "フォント", AXIS_TITLE_FONT_SIZE, false, AXIS_TITLE_FONT_FAMILY);
-
-    titleColor = new formattingSettings.ColorPicker({
-        name: "titleColor",
-        displayName: "カラー",
-        value: { value: "#252423" },
-    });
-
-    unitShow = new formattingSettings.ToggleSwitch({
-        name: "unitShow",
-        displayName: "単位ラベルの表示",
-        value: true,
-    });
-
-    unitText = new formattingSettings.TextInput({
-        name: "unitText",
-        displayName: "単位の追加文字",
-        value: "",
-        placeholder: "例: 円, 人, 件",
-    });
+    invertRange = this.parts.invertRange;
+    roundRange = this.parts.roundRange;
+    tickCount = this.parts.tickCount;
+    show = this.parts.show;
+    font = this.parts.font;
+    labelColor = this.parts.labelColor;
+    unitType = this.parts.unitType;
+    unitNotation = this.parts.unitNotation;
+    precision = this.parts.precision;
+    switchPosition = this.parts.switchPosition;
+    titleShow = this.parts.titleShow;
+    titleText = this.parts.titleText;
+    titleStyle = this.parts.titleStyle;
+    titleFont = this.parts.titleFont;
+    titleColor = this.parts.titleColor;
+    unitShow = this.parts.unitShow;
+    unitText = this.parts.unitText;
 
     rangeGroup = new Group({
         name: "valueRange",
@@ -1138,12 +917,7 @@ export class ValueAxisCardSettings extends CompositeCard {
         slices: [this.font, this.labelColor, this.unitType, this.unitNotation, this.precision, this.switchPosition],
     });
 
-    titleGroup = new Group({
-        name: "valueTitle",
-        displayName: "タイトル",
-        topLevelSlice: this.titleShow,
-        slices: [this.titleText, this.titleStyle, this.titleFont, this.titleColor],
-    });
+    titleGroup = this.parts.titleGroup;
 
     unitGroup = new Group({
         name: "valueUnit",
@@ -1160,52 +934,30 @@ export class GridlinesCardSettings extends SimpleCard {
     name = "gridlines";
     displayName = "グリッド線";
 
-    horizontalShow = new formattingSettings.ToggleSwitch({
-        name: "horizontalShow",
-        displayName: "グリッド線",
-        value: true,
+    private horizontal = gridlineParts({
+        prefix: "horizontal",
+        showDisplayName: "グリッド線",
+        show: true,
+        styleItems: LINE_STYLE_ITEMS,
+        style: itemOf(LINE_STYLE_ITEMS, LINE_STYLES.dotted),
     });
 
+    horizontalShow = this.horizontal.show;
     topLevelSlice = this.horizontalShow;
+    horizontalColor = this.horizontal.color;
+    horizontalTransparency = this.horizontal.transparency;
+    horizontalStyle = this.horizontal.style;
+    horizontalScaleWithWidth = this.horizontal.scaleWithWidth;
+    horizontalDashArray = this.horizontal.dashArray;
+    horizontalDashCap = this.horizontal.dashCap;
+    horizontalWidth = this.horizontal.width;
 
-    horizontalColor = new formattingSettings.ColorPicker({
-        name: "horizontalColor",
-        displayName: "カラー",
-        value: { value: "#E1DFDD" },
-    });
+    slices = this.horizontal.slices;
 
-    horizontalTransparency = new formattingSettings.NumUpDown({
-        name: "horizontalTransparency",
-        displayName: "透過性 (%)",
-        value: 0,
-    });
-
-    horizontalStyle = new formattingSettings.ItemDropdown({
-        name: "horizontalStyle",
-        displayName: "線のスタイル",
-        items: LINE_STYLE_ITEMS,
-        value: itemOf(LINE_STYLE_ITEMS, LINE_STYLES.dotted),
-    });
-
-    horizontalScaleWithWidth = new formattingSettings.ToggleSwitch({
-        name: "horizontalScaleWithWidth",
-        displayName: "幅で拡大縮小",
-        value: false,
-    });
-
-    horizontalWidth = new formattingSettings.NumUpDown({
-        name: "horizontalWidth",
-        displayName: "幅 (px)",
-        value: 1,
-    });
-
-    slices = [
-        this.horizontalColor,
-        this.horizontalTransparency,
-        this.horizontalStyle,
-        this.horizontalScaleWithWidth,
-        this.horizontalWidth,
-    ];
+    /** 線のスタイルがカスタムのときだけ、ダッシュ配列とダッシュ キャップを出す */
+    syncCustomDash(): void {
+        this.horizontal.sync();
+    }
 }
 
 /** データから決まる書式の中身。viewModel が組み、update() のたびに流し込む */
@@ -1307,6 +1059,7 @@ export class VisualFormattingSettingsModel extends Model {
         this.layout.applyEvents(data.events, data.leftEvent, data.rightEvent, data.hasOrigin);
         this.columns.applySeries(data.seriesTargets);
         this.target.visible = data.hasTarget;
+        this.gridlines.syncCustomDash();
         this.columns.subtotalStyle.visible = data.subtotalDiff;
         this.columns.subtotalTransparency.visible = data.subtotalDiff && this.columns.subtotalStyle.value?.value === SUBTOTAL_STYLES.fill;
         this.categoryAxis.displayName = data.horizontal ? "Y 軸" : "X 軸";

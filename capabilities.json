@@ -291,10 +291,22 @@
                     "displayName": "小計の見せ方",
                     "type": {
                         "enumeration": [
-                            { "value": "outline", "displayName": "枠だけ" },
-                            { "value": "fill", "displayName": "透かす" },
-                            { "value": "hatch", "displayName": "斜線" },
-                            { "value": "dashed", "displayName": "点線の枠" }
+                            {
+                                "value": "outline",
+                                "displayName": "枠だけ"
+                            },
+                            {
+                                "value": "fill",
+                                "displayName": "透かす"
+                            },
+                            {
+                                "value": "hatch",
+                                "displayName": "斜線"
+                            },
+                            {
+                                "value": "dashed",
+                                "displayName": "点線の枠"
+                            }
                         ]
                     }
                 },
@@ -1045,9 +1057,18 @@
                     "displayName": "切った印",
                     "type": {
                         "enumeration": [
-                            { "value": "slash", "displayName": "斜線" },
-                            { "value": "wave", "displayName": "波線" },
-                            { "value": "none", "displayName": "なし" }
+                            {
+                                "value": "slash",
+                                "displayName": "斜線"
+                            },
+                            {
+                                "value": "wave",
+                                "displayName": "波線"
+                            },
+                            {
+                                "value": "none",
+                                "displayName": "なし"
+                            }
                         ]
                     }
                 },
@@ -1310,14 +1331,43 @@
                             {
                                 "value": "dotted",
                                 "displayName": "点線"
+                            },
+                            {
+                                "value": "custom",
+                                "displayName": "カスタム"
                             }
                         ]
+                    }
+                },
+                "horizontalDashArray": {
+                    "displayName": "ダッシュ配列",
+                    "type": {
+                        "text": true
                     }
                 },
                 "horizontalScaleWithWidth": {
                     "displayName": "幅で拡大縮小",
                     "type": {
                         "bool": true
+                    }
+                },
+                "horizontalDashCap": {
+                    "displayName": "ダッシュ キャップ",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "value": "none",
+                                "displayName": "フラット"
+                            },
+                            {
+                                "value": "round",
+                                "displayName": "丸"
+                            },
+                            {
+                                "value": "square",
+                                "displayName": "四角"
+                            }
+                        ]
                     }
                 },
                 "horizontalWidth": {
