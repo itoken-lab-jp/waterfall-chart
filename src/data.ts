@@ -103,8 +103,13 @@ export interface Parsed {
     /** 「ツールヒント」のフィールド。項目の行から値を出す */
     tooltipItemsOf: (rows: number[]) => Array<{ displayName: string; value: string }>;
     hasHighlights: boolean;
-    /** Power BI がまだ行を残している（metadata.segment）。取り切れないと両端が合わない */
+    /**
+     * 行（項目）が上限（30,000）に達した。行も系列も top で受け、届いた数が上限に達したら切られたとみなす
+     * （行を window にして続きを読むと、系列が 60 で切られた。2026-10-07、Desktop）。切られると両端が合わない
+     */
     truncated: boolean;
+    /** 系列が上限（2,000）に達した */
+    seriesTruncated: boolean;
     /** 行の選択 ID（系列を付けるなら series の添字） */
     idsOf: (rows: number[], series?: number) => ISelectionId[];
 }
@@ -152,6 +157,7 @@ const EMPTY_PARSED = (error: string | null): Parsed => ({
     tooltipItemsOf: () => [],
     hasHighlights: false,
     truncated: false,
+    seriesTruncated: false,
     idsOf: () => [],
 });
 
@@ -370,10 +376,15 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         target: itemMeasure(targetColumns),
         tooltipItemsOf,
         hasHighlights,
-        truncated: !!dataView?.metadata?.segment,
+        truncated: (dataView?.categorical?.categories?.[0]?.values?.length ?? 0) >= ROW_LIMIT,
+        seriesTruncated: (valueColumns.grouped?.().length ?? 0) >= SERIES_LIMIT,
         idsOf,
     };
 }
+
+/** capabilities の行（項目）と系列の上限 */
+export const ROW_LIMIT = 30000;
+export const SERIES_LIMIT = 2000;
 
 /** 同じ行を指す ID を 1 つにする（イベントの行が分かれていても、項目は 1 回だけ選ぶ） */
 function dedupe(ids: ISelectionId[]): ISelectionId[] {

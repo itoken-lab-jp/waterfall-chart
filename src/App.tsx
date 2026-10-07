@@ -19,6 +19,7 @@ import { BAR_KINDS, Bar, BarKind, Segment, TooltipTarget, ViewModel } from "./vi
 import { ChartLayout, Line, Rect, SegmentLayout, TextLayout, barPath, layoutOf, subtotalPaint } from "./layout";
 import { SCROLL_STARTS, useScrollStart } from "./shared/scrollStart";
 import { CopyImageButton } from "./shared/CopyImageButton";
+import { haloStyle } from "./shared/halo";
 
 import IViewport = powerbi.IViewport;
 import ISelectionId = powerbi.visuals.ISelectionId;
@@ -100,6 +101,8 @@ function Text({ layout, className, opacity, title, hover }: { layout: TextLayout
                     fontStyle: font.style,
                     textDecoration: font.decoration,
                     fill: font.color,
+                    // 文字の縁。文字と縁の色が同じなら付けない
+                    ...(layout.halo ? haloStyle(layout.halo, font.color) : {}),
                 }}
             >
                 {layout.lines.map((line, i) => (

@@ -14,7 +14,7 @@ import { App } from "./App";
 import { hasBrowserMenu } from "./shared/copyImage";
 import { VisualFormattingSettingsModel } from "./settings";
 import { toRootCoordinates } from "./shared/tooltip";
-import { LOADING_NOTICE, TRUNCATED_NOTICE, TooltipTarget, transform, ViewModel } from "./viewModel";
+import { SERIES_TRUNCATED_NOTICE, TRUNCATED_NOTICE, TooltipTarget, transform, ViewModel } from "./viewModel";
 
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
 import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
@@ -70,15 +70,9 @@ export class Visual implements IVisual {
             const viewModel: ViewModel = transform(dataView, this.host, this.formattingSettings);
             // イベントの選択肢・系列の色などはデータ次第なので、populate のあとに流し込む
             this.formattingSettings.applyData(viewModel.format);
-            // 行が 30,000 を超えると、Power BI は続きを残して届ける（metadata.segment）。
-            // 続きを足し合わせて取りにいき、取り切れない（メモリの上限）ときは知らせたまま描く
-            if (viewModel.truncated) {
-                if (this.host.fetchMoreData(true)) {
-                    viewModel.notice = LOADING_NOTICE;
-                } else {
-                    this.host.displayWarningIcon("すべての行を読み込めていません", TRUNCATED_NOTICE);
-                }
-            }
+            // 行も系列も top で受ける（行を window にして続きを読むと、系列が 60 で切られた）。上限に達したら警告を出す
+            if (viewModel.truncated) this.host.displayWarningIcon("すべての行を読み込めていません", TRUNCATED_NOTICE);
+            else if (viewModel.seriesTruncated) this.host.displayWarningIcon("すべての凡例の値を読み込めていません", SERIES_TRUNCATED_NOTICE);
             this.selectedIds = this.selectionManager.getSelectionIds() as ISelectionId[];
             // 操作できない場所（ダッシュボードのタイルなど）では、選択を受け付けない
             const allowInteractions = this.host.hostCapabilities?.allowInteractions !== false;

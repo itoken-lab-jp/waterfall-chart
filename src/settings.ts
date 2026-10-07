@@ -21,7 +21,7 @@ import { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, LegendPosition, standardLegend
 import { AutoNumUpDown, itemOf } from "./shared/formatting";
 import { SCROLL_START_ITEMS } from "./shared/scrollStart";
 import { NEGATIVE_STYLE_ITEMS, ZERO_STYLE_ITEMS, SIGN_TONE_MODE_ITEMS, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
-import { legendParts, gridlineParts, categoryAxisParts, valueAxisParts, labelValueParts, labelBackgroundParts } from "./shared/formatCards";
+import { legendParts, gridlineParts, categoryAxisParts, valueAxisParts, labelValueParts, labelBackgroundParts, labelHaloParts } from "./shared/formatCards";
 
 export { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS };
 
@@ -689,7 +689,14 @@ export class DataLabelsCardSettings extends CompositeCard {
         slices: [this.backgroundColor, this.backgroundTransparency],
     });
 
-    groups = [this.optionsGroup, this.valuesGroup, this.totalsGroup, this.backgroundGroup];
+    /** 文字のまわりに縁を付ける（標準に無い項目。隣の棒や線の上でも読める） */
+    private halo = labelHaloParts();
+    haloShow = this.halo.haloShow;
+    haloColor = this.halo.haloColor;
+    haloWidth = this.halo.haloWidth;
+    haloGroup = this.halo.haloGroup;
+
+    groups = [this.optionsGroup, this.valuesGroup, this.totalsGroup, this.backgroundGroup, this.haloGroup];
 }
 
 /** 目標の線。「目標」にフィールドがあるときだけ出す。名前は凡例に出し、線にマウスを当てるとツールヒントで名前と値を出す */

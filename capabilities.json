@@ -99,7 +99,7 @@
                         }
                     ],
                     "dataReductionAlgorithm": {
-                        "window": {
+                        "top": {
                             "count": 30000
                         }
                     }
@@ -131,7 +131,7 @@
                         ],
                         "dataReductionAlgorithm": {
                             "top": {
-                                "count": 60
+                                "count": 2000
                             }
                         }
                     }
@@ -744,6 +744,28 @@
                 },
                 "backgroundTransparency": {
                     "displayName": "透過性 (%)",
+                    "type": {
+                        "numeric": true
+                    }
+                },
+                "haloShow": {
+                    "displayName": "文字の縁",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "haloColor": {
+                    "displayName": "文字の縁のカラー",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "haloWidth": {
+                    "displayName": "文字の縁の幅 (px)",
                     "type": {
                         "numeric": true
                     }

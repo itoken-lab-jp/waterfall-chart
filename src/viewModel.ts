@@ -52,6 +52,7 @@ import { ticksUpTo, tickCountOf, boundOf } from "./shared/ticks";
 import { gridDashOf, lineCapOf, CUSTOM_LINE_STYLE } from "./shared/gridlines";
 import { SCROLL_STARTS } from "./shared/scrollStart";
 import { blend } from "./shared/color";
+import { Halo, haloOf, NO_HALO } from "./shared/halo";
 import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
 
 export { tickCountOf, gridDashOf, blend, boundOf };
@@ -224,6 +225,8 @@ export interface ViewStyle {
         position: string;
         /** 背景。出さなければ null */
         background: { color: string; opacity: number } | null;
+        /** 文字の縁（幅 0 なら付けない） */
+        halo: Halo;
     };
     categoryAxis: {
         show: boolean;
@@ -278,8 +281,10 @@ export interface ViewModel {
     /** 定数線（固定の値）。出さなければ null */
     constantLine: TargetLine | null;
     hasHighlights: boolean;
-    /** Power BI がまだ行を残している（metadata.segment） */
+    /** 行（項目）が上限（30,000）に達した（data.ts の ROW_LIMIT） */
     truncated: boolean;
+    /** 系列が上限（2,000）に達した */
+    seriesTruncated: boolean;
     /** 書式ペインに流し込むデータ次第の中身 */
     format: DataDrivenFormat;
     style: ViewStyle;
@@ -299,9 +304,9 @@ const EPSILON = 1e-9;
 export const LANDING_MESSAGE =
     "「カテゴリ」と「値」を入れてください。値にメジャーを 2 つ（計画・実績など）入れるか、「比較」と「値」を入れると、その差を項目ごとに並べます。";
 
-export const LOADING_NOTICE = "続きの行を読み込んでいます…";
+export const TRUNCATED_NOTICE = "行が 30,000 件に達したので、先頭の 30,000 件で描いています。合計・小計・両端は読み込めた行で計算しています。フィルターで絞ってください。";
 
-export const TRUNCATED_NOTICE = "Power BI の行の上限で、すべての行を読み込めていません。合計・小計・両端は読み込めた行で計算しています。";
+export const SERIES_TRUNCATED_NOTICE = "凡例の値が 2,000 に達したので、先頭の 2,000 で描いています。フィルターで絞ってください。";
 
 const RATE_NAMES: Record<string, string> = {
     [RATE_TYPES.growth]: "伸び率",
@@ -396,6 +401,8 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
                           opacity: (100 - clamp(finiteOr(labels.backgroundTransparency.value, DEFAULT_LABEL_BACKGROUND_TRANSPARENCY), 0, 100)) / 100,
                       }
                     : null,
+            // ハイコントラストでは縁を付けない（前景色と背景色の 2 色で描く）
+            halo: hc ? NO_HALO : haloOf(labels.haloShow.value, colorOf(labels.haloColor), labels.haloWidth.value),
         },
         categoryAxis: {
             show: settings.categoryAxis.show.value ?? true,
@@ -478,6 +485,7 @@ function emptyOf(style: ViewStyle, message: string): ViewModel {
         constantLine: null,
         hasHighlights: false,
         truncated: false,
+        seriesTruncated: false,
         format: { ...NO_FORMAT, horizontal: style.orientation === ORIENTATIONS.horizontal },
         style,
     };
@@ -1301,6 +1309,7 @@ export function transform(
         constantLine,
         hasHighlights,
         truncated: parsed.truncated,
+        seriesTruncated: parsed.seriesTruncated,
         format: {
             events: eventNames,
             leftEvent: eventNames[leftIndex] ?? "",

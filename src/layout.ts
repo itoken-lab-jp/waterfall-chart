@@ -20,6 +20,7 @@ import { BREAK_STYLES, LABEL_POSITIONS, ORIENTATIONS } from "./settings";
 import { LEVEL_SEPARATOR } from "./data";
 import { Candidate, LabelRequest, Obstacle, placeLabels } from "./placement";
 import { PT_TO_PX } from "./shared/text";
+import { Halo } from "./shared/halo";
 import { legendPlacement } from "./shared/legend";
 import { recommendedTickCount } from "./shared/ticks";
 
@@ -153,6 +154,8 @@ export interface TextLayout {
     lineHeight: number;
     /** 背景（(x, y) を原点にした、回す前の座標）。無ければ null */
     background?: (Rect & { color: string; opacity: number }) | null;
+    /** 文字の縁。無ければ付けない */
+    halo?: Halo;
 }
 
 export interface BarLayout {
@@ -1174,6 +1177,7 @@ function layoutWith(
                 ? { x: cx + firstBaseline, y: cy, anchor: "middle", lines, rotate: -90, font, lineHeight }
                 : { x: cx, y: cy + firstBaseline, anchor: "middle", lines, rotate: 0, font, lineHeight };
             text.background = backgroundOf(lines, "middle", font, lineHeight, labelFill);
+            text.halo = style.dataLabels.halo;
             // 棒の中の候補は、自分の棒の中に収まるときだけ
             return { item: text, box: boxOf(text, labelPad), within: inside ? rect : undefined };
         });
