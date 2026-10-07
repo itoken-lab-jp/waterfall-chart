@@ -45,6 +45,8 @@ export interface ParsedSeries {
 
 /** 値の枠 1 本ぶん。形 1 ではイベント 1 つ、形 2・3 では値そのもの */
 export interface ParsedSource {
+    /** 値の列の書式の文字（0.0% など）。% の書式なら、軸・ラベルを % で出す */
+    formatString: string;
     name: string;
     format: Formatter;
     /** イベントの列のとき、そのイベントの行を選ぶ ID。メジャーのイベントは空 */
@@ -262,11 +264,13 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         const names = mergeOrders(sequences);
         const indexOf = new Map(names.map((name, k) => [name, k]));
         const format = formatterOf(firstValueColumn.source);
+        const formatString = valueFormatter.getFormatStringByColumn(firstValueColumn.source) ?? "";
         const rowsOfEvent = names.map((): number[] => []);
         rowEventName.forEach((name, row) => rowsOfEvent[indexOf.get(name)!].push(row));
         sources = names.map((name, k) => ({
             name,
             format,
+            formatString,
             selectionIds: dedupe(
                 rowsOfEvent[k].map((row) => host.createSelectionIdBuilder().withCategory(eventColumn, row).createSelectionId())
             ),
@@ -276,6 +280,7 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         sources = valueColumnsOf[0].map((column): ParsedSource => ({
             name: column.source.displayName,
             format: formatterOf(column.source),
+            formatString: valueFormatter.getFormatStringByColumn(column.source) ?? "",
             selectionIds: [],
         }));
         columnFor = (_row, source, s) => valueColumnsOf[s][source] ?? null;

@@ -53,7 +53,7 @@ import { gridDashOf, lineCapOf, CUSTOM_LINE_STYLE } from "./shared/gridlines";
 import { SCROLL_STARTS } from "./shared/scrollStart";
 import { blend } from "./shared/color";
 import { Halo, haloOf, NO_HALO } from "./shared/halo";
-import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
+import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR, isPercentFormat, percentDigitsOf, formatPercent } from "./shared/numberFormat";
 
 export { tickCountOf, gridDashOf, blend, boundOf };
 
@@ -1124,10 +1124,15 @@ export function transform(
         bars.filter(kind).reduce((m, bar) => Math.max(m, Math.abs(bar.value)), 0);
     const deltaMax = maxAbs((bar) => bar.kind !== BAR_KINDS.total);
     const unitBase = deltaMax || maxAbs((bar) => bar.kind === BAR_KINDS.total);
-    const unit = resolveUnit(dropdownValue(axisSettings.unitType, "auto"), unitBase, notation, axisPrecision);
+    // 値の書式が %（構成比・率）なら、表示単位で割らず、単位ラベルも付けずに % で出す
+    const percentValue = parsed.sources.length > 0 && parsed.sources.every((source) => isPercentFormat(source.formatString));
+    const valuePercentDigits = percentDigitsOf(parsed.sources[0]?.formatString);
+    const unit = percentValue
+        ? resolveUnit("0", 0, notation, axisPrecision)
+        : resolveUnit(dropdownValue(axisSettings.unitType, "auto"), unitBase, notation, axisPrecision);
     // データ ラベルの表示単位。「Y 軸と同じ」でなければラベル自身の単位で出し、単位の語を付ける
     const labelUnitKey = dropdownValue(settings.dataLabels.unitType, "auto");
-    const labelUnit = labelUnitKey === "auto" ? null : resolveUnit(labelUnitKey, unitBase, notation, labelPrecision);
+    const labelUnit = labelUnitKey === "auto" || percentValue ? null : resolveUnit(labelUnitKey, unitBase, notation, labelPrecision);
     // マイナスと 0 の書き方（▲・±0 など）。合計には + を付けない
     const signStyle: SignStyle = {
         negative: dropdownValue(settings.dataLabels.negativeStyle, NEGATIVE_STYLES.minus),
@@ -1137,7 +1142,9 @@ export function transform(
     };
     // 目標の線・定数線の値にも使う（+ は付けない）
     const labelOf = (v: number, plus = false) =>
-        labelUnit
+        percentValue
+            ? formatPercent(v, labelPrecision, valuePercentDigits, { ...signStyle, plus })
+            : labelUnit
             ? formatSigned(v, labelUnit.divisor, labelPrecision, { ...signStyle, plus }, labelUnit.unitWord)
             : formatSigned(v, unit.divisor, labelPrecision, { ...signStyle, plus });
     // 増減・小計の値の文字を符号で塗る（見える符号で決める。▲0 はマイナス、±0 は塗らない）
@@ -1150,7 +1157,15 @@ export function transform(
     for (const bar of bars) {
         const delta = bar.kind !== BAR_KINDS.total;
         bar.labelText = labelOf(bar.value, delta && signStyle.plus);
-        const tone = delta ? toneOf(shownSignOf(bar.value, labelDivisor, labelPrecision, signStyle), 1, toneMode) : null;
+        const tone = delta
+            ? toneOf(
+                  percentValue
+                      ? shownSignOf(bar.value * 100, 1, labelPrecision === "auto" ? String(valuePercentDigits) : labelPrecision, signStyle)
+                      : shownSignOf(bar.value, labelDivisor, labelPrecision, signStyle),
+                  1,
+                  toneMode
+              )
+            : null;
         bar.labelToneColor = tone ? toneColors[tone] : "";
     }
 
@@ -1204,13 +1219,14 @@ export function transform(
             end: boundOf(axisSettings.end.value),
             round: axisSettings.roundRange.value ?? true,
         },
-        (v) => formatValue(v, unit.divisor, axisPrecision),
+        // % の目盛りは、桁が自動なら値の大きさで決める（5% 以上なら整数。40% のように出す）
+        (v) => (percentValue ? formatPercent(v, axisPrecision, unitBase * 100 >= 5 ? 0 : 1) : formatValue(v, unit.divisor, axisPrecision)),
         target ? [target.value] : []
     );
 
     // --- 軸のタイトル -----------------------------------------------------------------------
     // 自動は、値の軸は値のフィールドの名前、項目の軸は見えているレベルの名前（ドリルした親のレベルは除く）
-    const unitLabel = `${unit.unitWord}${(axisSettings.unitText.value ?? "").trim()}`;
+    const unitLabel = percentValue ? "" : `${unit.unitWord}${(axisSettings.unitText.value ?? "").trim()}`;
     const titleOf = (styleValue: string, text: string, unitText: string): string => {
         if (styleValue === TITLE_STYLES.showUnitOnly) return unitText;
         if (styleValue === TITLE_STYLES.showBoth) return unitText ? `${text} (${unitText})` : text;
@@ -1301,7 +1317,7 @@ export function transform(
         rightEvent: eventNames[rightIndex] ?? "",
         axis,
         unitBadge:
-            (axisSettings.unitShow.value ?? true) && !unitInTitle ? unitBadgeOf(unit.unitWord, axisSettings.unitText.value ?? "") : "",
+            (axisSettings.unitShow.value ?? true) && !unitInTitle && !percentValue ? unitBadgeOf(unit.unitWord, axisSettings.unitText.value ?? "") : "",
         drillPath: (settings.layout.drillPathShow.value ?? true) ? drillPath : "",
         copyButton: settings.layout.copyButton.value ?? true,
         legend,

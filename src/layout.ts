@@ -20,6 +20,7 @@ import { BREAK_STYLES, LABEL_POSITIONS, ORIENTATIONS } from "./settings";
 import { LEVEL_SEPARATOR } from "./data";
 import { Candidate, LabelRequest, Obstacle, placeLabels } from "./placement";
 import { PT_TO_PX } from "./shared/text";
+import { rotatedLabelLeadIn } from "./shared/rotatedLabels";
 import { Halo } from "./shared/halo";
 import { legendPlacement } from "./shared/legend";
 import { recommendedTickCount } from "./shared/ticks";
@@ -39,6 +40,8 @@ const BREAK_WAVE = 1.5;
 const SIN45 = Math.SQRT1_2;
 /** 斜めの項目名と描く範囲の下端のあいだ */
 const ROTATED_GAP = 8;
+/** スクロールしないとき、斜めの項目名の左端とビジュアルの左端のあいだに残す余白（px） */
+const ROTATED_LEFT_MARGIN = 4;
 const NOTICE_HEIGHT = 16;
 /**
  * ビジュアルの上端に空ける余白。題名が折り返したときに、上の凡例・単位のラベルが題名の最後の行に
@@ -550,6 +553,32 @@ function layoutWith(
                     )
                 );
                 content += leadIn;
+            } else {
+                // スクロールしないときも、斜めの名前はビジュアルの左端より外へ出ると切れる（項目名が長いと、1 本目の名前の頭が隠れた）。
+                // 名前の左端が左端の余白に収まるだけ、棒の並びの前を空ける。空けると帯が狭まり中心も動くので、
+                // 中心 = left + leadIn + (width − leadIn) × kk として解く。空けすぎないよう、幅の 30% までで止め、入らない名前は省く
+                const slots = n - pad + 2 * outer;
+                const centerRatio = (k: number) => (outer + k + (1 - pad) / 2) / slots;
+                const need = rotatedLabelLeadIn(
+                    categoryTexts.flatMap((t, k) =>
+                        k % step !== 0 || !t.lines.length
+                            ? []
+                            : [{ extent: measureTextWidth(t.lines[0], specOf(categoryFontOf(bars[k]))) * SIN45 + categorySize * 0.5, ratio: centerRatio(k) }]
+                    ),
+                    left,
+                    width,
+                    ROTATED_LEFT_MARGIN
+                );
+                leadIn = Math.max(0, Math.min(need, width * 0.3));
+                if (leadIn > 0 || need > 0) {
+                    // 空けても入らない名前は、名前の左端が余白に収まる長さまで省く
+                    categoryTexts = categoryTexts.map((t, k) => {
+                        if (!t.lines.length) return t;
+                        const center = left + leadIn + (width - leadIn) * centerRatio(k);
+                        const room = (center - ROTATED_LEFT_MARGIN - categorySize * 0.5) / SIN45;
+                        return room < length ? { ...t, lines: [truncateStartToWidth(pathOf(bars[k]), Math.max(0, room), specOf(categoryFontOf(bars[k])))] } : t;
+                    });
+                }
             }
         }
         const bottomReserve =
