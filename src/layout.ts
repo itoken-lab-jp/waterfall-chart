@@ -15,7 +15,8 @@
 import powerbi from "powerbi-visuals-api";
 
 import { BAR_KINDS, Bar, LegendItem, Segment, TextStyle, TooltipItem, ViewModel, blend, extentOf } from "./viewModel";
-import { FontSpec, measureTextWidth, readableText, truncateStartToWidth, truncateToWidth } from "./unitUtils";
+import { FontSpec, measureTextWidth, truncateStartToWidth, truncateToWidth } from "./unitUtils";
+import { autoLabelColor } from "./shared/color";
 import { BREAK_STYLES, LABEL_POSITIONS, ORIENTATIONS } from "./settings";
 import { LEVEL_SEPARATOR } from "./data";
 import { Candidate, LabelRequest, Obstacle, placeLabels } from "./placement";
@@ -23,7 +24,13 @@ import { PT_TO_PX } from "./shared/text";
 import { rotatedLabelLeadIn } from "./shared/rotatedLabels";
 import { Halo } from "./shared/halo";
 import { legendPlacement } from "./shared/legend";
-import { recommendedTickCount } from "./shared/ticks";
+import { Rect, CornerSide, Corner, cornerRadiusOf, barPath } from "./shared/barShape";
+
+export type { Rect, CornerSide, Corner };
+export { cornerRadiusOf, barPath };
+import { LegendPaging, pagesByWidth } from "./shared/LegendArrowButton";
+import { recommendedTickCount, fitTicks } from "./shared/ticks";
+import { placeReferenceLabels } from "./shared/referenceLine";
 
 export { PT_TO_PX, recommendedTickCount };
 
@@ -53,6 +60,10 @@ const TOP_MARGIN = 8;
 const LEGEND_GAP_BOTTOM = 10;
 const legendGapBottom = (height: number) => Math.max(0, Math.min(LEGEND_GAP_BOTTOM, (height - 150) / 5));
 const LEGEND_SWATCH = 10;
+/** 凡例の項目のあいだ（itemWidth の末尾に足してある間） */
+const LEGEND_ITEM_GAP = 12;
+/** 凡例のページを送る矢印と項目のあいだ */
+const LEGEND_ARROW_GAP = 6;
 /** 凡例の線の印（目標の線）の長さ。破線・点線の模様が見える長さ */
 const LEGEND_LINE = 18;
 /** 凡例の印の幅（棒は四角、目標は線） */
@@ -61,21 +72,7 @@ const swatchWidthOf = (item: LegendItem) => (item.kind === "target" ? LEGEND_LIN
 export const SCROLLBAR = 12;
 /** データ ラベルの背景の余白 */
 const LABEL_PADDING = 2;
-/** 自動の色で、棒の外に出すラベル・背景を出すラベルの色（足りなければ白か濃い灰色） */
-const LABEL_OUTSIDE_COLOR = "#605E5C";
-/**
- * 自動の文字色に求めるコントラスト比。棒の中は白を優先し 3 以上（標準と同じく、テーマの青 #118DFF の上は白）、
- * 外・背景の上は灰色を優先し 4.5 以上
- */
-const INSIDE_TEXT_CONTRAST = 3;
-const OUTSIDE_TEXT_CONTRAST = 4.5;
 
-export interface Rect {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-}
 
 /** SVG の文字の見た目（ピクセル） */
 export interface RenderFont {
@@ -88,7 +85,6 @@ export interface RenderFont {
 }
 
 /** 角を丸める端（画面の向き） */
-export type CornerSide = "top" | "bottom" | "left" | "right";
 
 export interface SegmentLayout {
     segment: Segment;
@@ -101,50 +97,6 @@ export interface SegmentLayout {
     highlightCorner: Corner | null;
 }
 
-export interface Corner {
-    sides: CornerSide[];
-    radius: number;
-}
-
-/**
- * 棒（区画）の path。corner があれば、その端（sides）の角だけを丸める（二次曲線）。
- * corner が無い・半径が 0 なら長方形
- */
-/** 実際に描く角の半径。棒の太さの半分と、長さ（両端を丸めるなら長さの半分）まで。丸めなければ 0 */
-export function cornerRadiusOf(r: Rect, corner: Corner | null): number {
-    if (!corner || !corner.sides.length) return 0;
-    const has = (side: CornerSide) => corner.sides.includes(side);
-    const alongHeight = (has("top") ? 1 : 0) + (has("bottom") ? 1 : 0);
-    const alongWidth = (has("left") ? 1 : 0) + (has("right") ? 1 : 0);
-    return Math.max(
-        0,
-        Math.min(
-            corner.radius,
-            alongHeight ? Math.min(r.width / 2, r.height / alongHeight) : Infinity,
-            alongWidth ? Math.min(r.height / 2, r.width / alongWidth) : Infinity
-        )
-    );
-}
-
-export function barPath(r: Rect, corner: Corner | null): string {
-    const { x, y, width: w, height: h } = r;
-    const has = (side: CornerSide) => corner?.sides.includes(side) ?? false;
-    const k = cornerRadiusOf(r, corner);
-    if (!corner || k <= 0) return `M ${x},${y} h ${w} v ${h} h ${-w} Z`;
-    const x2 = x + w;
-    const y2 = y + h;
-    // 角ごとの半径（左上から時計回り）。丸めない角は 0（二次曲線が点に縮む）
-    const tl = has("top") || has("left") ? k : 0;
-    const tr = has("top") || has("right") ? k : 0;
-    const br = has("bottom") || has("right") ? k : 0;
-    const bl = has("bottom") || has("left") ? k : 0;
-    return (
-        `M ${x + tl},${y} L ${x2 - tr},${y} Q ${x2},${y} ${x2},${y + tr} ` +
-        `L ${x2},${y2 - br} Q ${x2},${y2} ${x2 - br},${y2} ` +
-        `L ${x + bl},${y2} Q ${x},${y2} ${x},${y2 - bl} ` +
-        `L ${x},${y + tl} Q ${x},${y} ${x + tl},${y} Z`
-    );
-}
 
 export interface TextLayout {
     x: number;
@@ -187,7 +139,7 @@ export interface BreakMark {
     extent: [number, number];
 }
 
-export interface LegendLayout {
+export interface LegendLayout extends LegendPaging {
     title: TextLayout | null;
     /** y は色の四角の上端（線の印は y + 5 に引く）、textY は名前のベースライン、swatchWidth は印の幅（名前は x + swatchWidth + 4 から） */
     items: Array<{ item: LegendItem; index: number; x: number; swatchWidth: number; y: number; textY: number; text: string }>;
@@ -199,10 +151,17 @@ export interface ReferenceLine {
     color: string;
     width: number;
     dash: string | null;
+    cap?: "round" | "square" | "butt";
     /** 名前と値（スクロールしない側に置く）。出さなければ null */
     label: TextLayout | null;
     /** 線にマウスを当てたときのツールヒント。空なら出さない（定数線） */
     tooltip: TooltipItem[];
+    /** 線の不透明度（定数線の透過性）。無ければ 1 */
+    opacity?: number;
+    /** 棒の後ろ（back）か前（front）に描く。無ければ前 */
+    layer?: "back" | "front";
+    /** 網掛け領域（中身の座標）と塗り。無ければ塗らない */
+    shade?: (Rect & { color: string; opacity: number }) | null;
 }
 
 export interface ChartLayout {
@@ -375,30 +334,32 @@ const NEAR_PASSES = 3;
  * 1 回目は項目名の側（縦は下、横は左）に余白をとらずに置く。値の端にある棒のラベルが項目名の側へはみ出すなら、
  * はみ出した分だけ描く範囲と項目名のあいだを空けて置き直す（ラベルが項目名に重ならないように。空けるのは要るときだけ）
  */
-export function layoutOf(viewModel: ViewModel, viewport: IViewport): ChartLayout | null {
+/** legendPage は、凡例が入りきらないときに出すページ（0 から。範囲の外なら端のページ） */
+export function layoutOf(viewModel: ViewModel, viewport: IViewport, legendPage = 0): ChartLayout | null {
     // 空けるのはビューの 1/4 まで。それでも入らないラベルは出さない
     const cap = (viewModel.style.orientation === ORIENTATIONS.horizontal ? viewport.width : viewport.height) * 0.25;
     let room = 0;
-    let result = layoutWith(viewModel, viewport, room);
+    let result = layoutWith(viewModel, viewport, room, legendPage);
     for (let pass = 0; result && result.nearOverflow > 0 && pass < NEAR_PASSES; pass++) {
         const wider = Math.min(cap, room + Math.ceil(result.nearOverflow) + 1);
         if (wider <= room) break;
         room = wider;
-        const next = layoutWith(viewModel, viewport, room);
+        const next = layoutWith(viewModel, viewport, room, legendPage);
         // 空けると描く範囲が狭くなりすぎるときは、はみ出すラベルを出さない版のまま
         if (!next) break;
         result = next;
     }
     // 描く範囲が足りない・位置の文字が 1 文字も入らないときは、ドリルの位置をとらずに組み直す
     // （位置の行のせいで図ごと消えない・空の位置で行の高さだけとらないように）
-    if (viewModel.drillPath && !result?.layout.drillPath) return layoutOf({ ...viewModel, drillPath: "" }, viewport);
+    if (viewModel.drillPath && !result?.layout.drillPath) return layoutOf({ ...viewModel, drillPath: "" }, viewport, legendPage);
     return result?.layout ?? null;
 }
 
 function layoutWith(
     viewModel: ViewModel,
     viewport: IViewport,
-    nearRoom: number
+    nearRoom: number,
+    legendPage = 0
 ): { layout: ChartLayout; nearOverflow: number } | null {
     const { style, axis, bars } = viewModel;
     if (!bars.length) return null;
@@ -441,12 +402,12 @@ function layoutWith(
     const legendTitleWidth = style.legend.title
         ? measureTextWidth(style.legend.title, specOf({ ...legendFont, weight: "bold" })) + 8
         : 0;
-    const itemWidth = (item: LegendItem) => swatchWidthOf(item) + 4 + measureTextWidth(item.name, specOf(legendFont)) + 12;
+    const itemWidth = (item: LegendItem) => swatchWidthOf(item) + 4 + measureTextWidth(item.name, specOf(legendFont)) + LEGEND_ITEM_GAP;
     const legendColumnWidth = legendShown
         ? Math.min(W * 0.3, Math.max(legendTitleWidth, ...viewModel.legend.map(itemWidth)) + 8)
         : 0;
     // ドリルダウンした位置。縦向きで単位のラベルを出すときは、その行（描く範囲の上）に並べて行を足さない
-    // （2026-09-25 ユーザー「縦に積むとグラフエリアが狭くなる」）。横向き（単位は右下）・単位を出さないときは、上の凡例の下に 1 行とる
+    // （2026-09-25 ユーザー決定。縦に積むとグラフエリアが狭くなるため）。横向き（単位は右下）・単位を出さないときは、上の凡例の下に 1 行とる
     const drillPathFont = renderFontOf(style.categoryAxis.font);
     const badgeShown = Boolean(viewModel.unitBadge) && style.valueAxis.show;
     const pathSharesBadgeRow = Boolean(viewModel.drillPath) && !horizontal && badgeShown;
@@ -464,10 +425,11 @@ function layoutWith(
     const badgeRowFont = pathSharesBadgeRow ? Math.max(tickFont.size, drillPathFont.size) : tickFont.size;
     // 並べないときは 1.11.18 までと同じ高さ（ドリルしていないときの見た目を変えない）
     const badgeHeight = !badgeShown ? 0 : pathSharesBadgeRow ? badgeRowFont + Math.max(6, Math.ceil(badgeRowFont * 0.22) + 2) : tickFont.size + 6;
-    const referenceLabelRoom = viewModel.target?.label || viewModel.constantLine?.label ? labelFont.size + 6 : 0;
+    // 定数線のデータ ラベルは標準と同じく描く範囲の中に置くので、余白は目標の名前だけ
+    const referenceLabelRoom = viewModel.target?.label ? labelFont.size + 6 : 0;
 
     const tickLabelWidth = style.valueAxis.show
-        ? // 目盛りの本数は描く範囲の長さで決まる（下の axisTicks）。いちばん細かい 8 本の数字の幅も見積もりに入れる
+        ? // 目盛りの本数は描く範囲の長さで決まる（下の shownTicks）。いちばん細かい 8 本の数字の幅も見積もりに入れる
           Math.max(0, ...[...axis.ticks, ...(axis.ticksFor?.(Math.max(8, style.valueAxis.tickCount)) ?? [])].map((t) => measureTextWidth(t.label, specOf(tickFont))))
         : 0;
     const labelTextOf = (b: Bar) => (b.rateText ? `${b.labelText} (${b.rateText})` : b.labelText);
@@ -826,17 +788,17 @@ function layoutWith(
     const contentEnd = scrollAxis ? (horizontal ? plot.y : plot.x) + content : plotEnd;
     // 目盛りの本数は、標準と同じく描く範囲の長さで決める（縦は高さ 150・300px、横は幅 300・500px で 3・5・8 まで）
     // 「目盛りの本数 (目安)」があればその本数
-    const axisTicks = axis.ticksFor
-        ? axis.ticksFor(style.valueAxis.tickCount || recommendedTickCount(horizontal ? plot.width : plot.height, horizontal ? "horizontal" : "vertical"))
+    // それでも目盛りの数字が重なるときは、本数を減らして切りのいい目盛りを取り直す（標準と同じ。グリッド線も同じ目盛り）。
+    // 要る間隔は、縦は文字の行の高さ（和文も入るフォントの上下の広がり 1.4 文字）、横はいちばん長い数字 + 8px
+    const tickTarget = style.valueAxis.tickCount || recommendedTickCount(horizontal ? plot.width : plot.height, horizontal ? "horizontal" : "vertical");
+    const shownTicks = axis.ticksFor
+        ? fitTicks(
+              axis.ticksFor,
+              tickTarget,
+              (ticks) => Math.min(...ticks.slice(1).map((t, i) => Math.abs(pos(t.value) - pos(ticks[i].value)))),
+              (ticks) => (horizontal ? Math.max(0, ...ticks.map((t) => measureTextWidth(t.label, specOf(tickFont)))) + 8 : tickFont.size * 1.4)
+          )
         : axis.ticks;
-    // それでも目盛りの数字が重なるときは、間引いて出す（グリッド線も同じ目盛りだけ。0 があれば 0 を残す）
-    const tickSpacing = axisTicks.length > 1 ? Math.abs(pos(axisTicks[1].value) - pos(axisTicks[0].value)) : Infinity;
-    // 縦は文字の行の高さ（和文も入るフォントの上下の広がり 1.4 文字）ぶん、横は一番長い数字 + 8px
-    const tickNeed = horizontal ? tickLabelWidth + 8 : tickFont.size * 1.4;
-    const tickStride = tickSpacing > 0 ? Math.max(1, Math.ceil(tickNeed / tickSpacing)) : 1;
-    const zeroTick = axisTicks.findIndex((t) => t.value === 0);
-    const tickPhase = zeroTick >= 0 ? zeroTick % tickStride : 0;
-    const shownTicks = axisTicks.filter((_, i) => i % tickStride === tickPhase);
     const ticks: TextLayout[] = style.valueAxis.show
         ? shownTicks.map(
               (t): TextLayout =>
@@ -874,10 +836,25 @@ function layoutWith(
         if (ref.value < axis.min || ref.value > axis.max) return null;
         const p = pos(ref.value);
         const line = horizontal ? { x1: p, y1: plot.y, x2: p, y2: contentEnd } : { x1: plot.x, y1: p, x2: contentEnd, y2: p };
-        return { line, color: ref.color, width: ref.width, dash: ref.dash, label: null, tooltip: ref.tooltip };
+        return { line, color: ref.color, width: ref.width, dash: ref.dash, cap: ref.cap, label: null, tooltip: ref.tooltip };
     };
     const target = referenceOf(viewModel.target);
     const constantLine = referenceOf(viewModel.constantLine);
+    if (constantLine && viewModel.constantLine) {
+        // 定数線の透過性・前後・網掛け領域（標準の Y 軸の定数線と同じ。網掛けは値の小さい側か大きい側の、軸の端まで）
+        const cs = viewModel.constantLine.style;
+        constantLine.opacity = Math.max(0, Math.min(1, 1 - cs.transparency / 100));
+        constantLine.layer = cs.layer;
+        if (cs.shadeShow) {
+            const p = horizontal ? constantLine.line.x1 : constantLine.line.y1;
+            const edge = pos(viewModel.constantLine.shadeRegion === "above" ? axis.max : axis.min);
+            const [from, to] = [Math.min(p, edge), Math.max(p, edge)];
+            const fill = { color: cs.shadeColor, opacity: Math.max(0, Math.min(1, 1 - cs.shadeTransparency / 100)) };
+            constantLine.shade = horizontal
+                ? { x: from, y: plot.y, width: to - from, height: contentEnd - plot.y, ...fill }
+                : { x: plot.x, y: from, width: contentEnd - plot.x, height: to - from, ...fill };
+        }
+    }
 
     // --- 軸のタイトル ---------------------------------------------------------------------------------
     // タイトルは沿う辺（描く範囲の長さ）に収まるように後ろを「…」で省く。単位のラベル（描く範囲の上）に届かないように
@@ -950,56 +927,108 @@ function layoutWith(
             font: titleFont,
             lineHeight: legendFont.size + 2,
         });
+        // 標準と同じく、入りきらなければページに分けて矢印で送る（上下に置けば左右の矢印、左右に置けば上下の矢印）
+        let paging: LegendPaging = { pageCount: 1, page: 0, arrows: null };
+        const pageOf = (count: number) => Math.max(0, Math.min(count - 1, legendPage));
         if (placement.side === "top" || placement.side === "bottom") {
             const y = placement.side === "top" ? TOP_MARGIN + 4 : H - noticeHeight - legendRow + 4;
             const available = W - 8;
             const widths = viewModel.legend.map(itemWidth);
-            let used = legendTitleWidth;
-            let count = 0;
-            for (const w of widths) {
-                if (used + w > available && count > 0) break;
-                used += w;
-                count++;
-            }
-            const startX = placement.align === "center" ? (W - used) / 2 : placement.align === "end" ? W - 4 - used : 4;
-            if (style.legend.title) title = titleLayout(startX, y);
-            let x = startX + legendTitleWidth;
-            for (let i = 0; i < count; i++) {
-                const dropped = i === count - 1 && count < viewModel.legend.length;
-                items.push({
-                    item: viewModel.legend[i],
-                    index: i,
-                    x,
-                    swatchWidth: swatchWidthOf(viewModel.legend[i]),
-                    ...rowOf(y),
-                    text: dropped ? `${viewModel.legend[i].name} …` : viewModel.legend[i].name,
+            const total = widths.reduce((sum, w) => sum + w, 0);
+            if (legendTitleWidth + total <= available) {
+                // 全部入る（今までと同じ並び）
+                const startX = placement.align === "center" ? (W - legendTitleWidth - total) / 2 : placement.align === "end" ? W - 4 - legendTitleWidth - total : 4;
+                if (style.legend.title) title = titleLayout(startX, y);
+                let x = startX + legendTitleWidth;
+                viewModel.legend.forEach((item, i) => {
+                    items.push({ item, index: i, x, swatchWidth: swatchWidthOf(item), ...rowOf(y), text: item.name });
+                    x += widths[i];
                 });
-                x += widths[i];
+            } else {
+                // 入りきらなければページに分ける。タイトルはビジュアルの幅の 3 割までにし、矢印はどのページでも同じ位置に置く
+                const arrowSize = legendRow - 4;
+                const arrowRoom = arrowSize + LEGEND_ARROW_GAP;
+                const titleCap = Math.min(legendTitleWidth, available * 0.3);
+                const titleFontSpec = specOf({ ...legendFont, weight: "bold" });
+                const titleText =
+                    style.legend.title && legendTitleWidth > titleCap ? truncateToWidth(style.legend.title, titleCap - 8, titleFontSpec) : style.legend.title;
+                const room = Math.max(20, available - titleCap - arrowRoom * 2);
+                // 項目の幅は末尾の間（LEGEND_ITEM_GAP）を除いて分け、間はページの中の項目のあいだにだけ足す
+                const bare = widths.map((w) => Math.min(w - LEGEND_ITEM_GAP, room));
+                const pages = pagesByWidth(bare, room, LEGEND_ITEM_GAP);
+                const page = pageOf(pages.length);
+                const pageWidth = Math.max(...pages.map((pg) => pg.reduce((sum, i, k) => sum + (k ? LEGEND_ITEM_GAP : 0) + bare[i], 0)));
+                const used = titleCap + arrowRoom * 2 + pageWidth;
+                const startX = Math.max(4, placement.align === "center" ? (W - used) / 2 : placement.align === "end" ? W - 4 - used : 4);
+                if (titleText) title = { ...titleLayout(startX, y), lines: [titleText] };
+                const arrowY = rowOf(y).y + LEGEND_SWATCH / 2;
+                let x = startX + titleCap + arrowRoom;
+                for (const i of pages[page]) {
+                    const item = viewModel.legend[i];
+                    // 1 つで入らない名前は「…」で省く（1 文字も入らなくても頭の 1 文字は残す）
+                    const cut = bare[i] < widths[i] - LEGEND_ITEM_GAP;
+                    const text = cut ? truncateToWidth(item.name, Math.max(0, bare[i] - swatchWidthOf(item) - 4), specOf(legendFont)) || item.name.charAt(0) + "…" : item.name;
+                    items.push({ item, index: i, x, swatchWidth: swatchWidthOf(item), ...rowOf(y), text });
+                    x += bare[i] + LEGEND_ITEM_GAP;
+                }
+                paging = {
+                    pageCount: pages.length,
+                    page,
+                    arrows: {
+                        prev: { x: startX + titleCap + arrowSize / 2, y: arrowY, size: arrowSize, direction: "left", enabled: page > 0 },
+                        next: { x: startX + used - arrowSize / 2, y: arrowY, size: arrowSize, direction: "right", enabled: page < pages.length - 1 },
+                    },
+                };
             }
         } else {
             const x = placement.side === "left" ? 4 : W - legendColumnWidth + 4;
-            const rows = viewModel.legend.length + (style.legend.title ? 1 : 0);
             const areaTop = TOP_MARGIN + 4;
             const areaHeight = H - 8 - TOP_MARGIN - noticeHeight;
+            const fits = Math.floor((areaHeight + 1) / legendRow);
+            let titleRows = style.legend.title ? 1 : 0;
+            let paged = viewModel.legend.length + titleRows > fits;
+            // 矢印 2 行と項目 1 行も入らないほど低ければタイトルを外し、それでも入らなければ矢印を出さずに入るだけ出す
+            if (paged && fits < titleRows + 3) titleRows = 0;
+            if (paged && fits < 3) paged = false;
+            const perPage = paged ? Math.max(1, fits - titleRows - 2) : Math.max(1, Math.min(viewModel.legend.length, fits - titleRows));
+            const pageCount = paged ? Math.ceil(viewModel.legend.length / perPage) : 1;
+            const page = pageOf(pageCount);
+            const shown = viewModel.legend.slice(page * perPage, page * perPage + perPage);
+            // 矢印の位置はどのページでも同じにする（いちばん行の多いページで並べる）
+            const rows = (paged ? perPage + 2 : shown.length) + titleRows;
             let y =
                 placement.align === "center"
                     ? areaTop + (areaHeight - rows * legendRow) / 2
                     : placement.align === "end"
                       ? areaTop + areaHeight - rows * legendRow
                       : areaTop;
-            if (style.legend.title) {
+            y = Math.max(areaTop, y);
+            if (titleRows) {
                 title = titleLayout(x, y);
                 y += legendRow;
             }
-            viewModel.legend.forEach((item, i) => {
-                if (y + legendRow > areaTop + areaHeight + 1) return;
+            const arrowSize = legendRow - 4;
+            const arrowAt = (top: number) => rowOf(top).y + LEGEND_SWATCH / 2;
+            const prevY = arrowAt(y);
+            const nextY = arrowAt(y + (perPage + 1) * legendRow);
+            if (paged) y += legendRow;
+            shown.forEach((item, k) => {
                 const swatchWidth = swatchWidthOf(item);
                 const textWidth = legendColumnWidth - swatchWidth - 16;
-                items.push({ item, index: i, x, swatchWidth, ...rowOf(y), text: truncateToWidth(item.name, textWidth, specOf(legendFont)) });
+                items.push({ item, index: page * perPage + k, x, swatchWidth, ...rowOf(y), text: truncateToWidth(item.name, textWidth, specOf(legendFont)) });
                 y += legendRow;
             });
+            if (paged)
+                paging = {
+                    pageCount,
+                    page,
+                    arrows: {
+                        prev: { x: x + arrowSize / 2, y: prevY, size: arrowSize, direction: "up", enabled: page > 0 },
+                        next: { x: x + arrowSize / 2, y: nextY, size: arrowSize, direction: "down", enabled: page < pageCount - 1 },
+                    },
+                };
         }
-        legend = { title, items, font: legendFont };
+        legend = { title, items, font: legendFont, ...paging };
     }
 
     // 単位のラベル：縦向きは値の軸の目盛りの列にそろえて、描く範囲の上に置く。
@@ -1123,12 +1152,12 @@ function layoutWith(
         ...overlayInContent.map(asBox),
     ];
 
-    // データ ラベルの候補：外の先（増えた棒・正の合計は値の大きい側、減った棒・負の合計は小さい側）→ 中の先 → 外の根元
+    // データ ラベルの候補：外の先（増えた棒・正の合計は値の大きい側、減った棒・負の合計は小さい側）→ 中の先
     const labelFill = style.dataLabels.background;
     const labelPad = labelFill ? LABEL_PADDING : HIT_PAD;
     /** 背景の四角が文字の外に出る分 */
     const fillPad = labelFill ? LABEL_PADDING : 0;
-    type Spot = "outEnd" | "inEnd" | "outStart" | "inHigh" | "inCenter" | "inLow";
+    type Spot = "outEnd" | "inEnd" | "inHigh" | "inCenter" | "inLow";
     const position = style.dataLabels.position;
     const spots: Spot[] =
         position === LABEL_POSITIONS.outsideEnd
@@ -1139,7 +1168,9 @@ function layoutWith(
                 ? ["inCenter"]
                 : position === LABEL_POSITIONS.insideBottom
                   ? ["inLow"]
-                  : ["outEnd", "inEnd", "outStart"];
+                  : // 自動は、棒の先の外、入らなければ棒の中の先（標準と同じ）。反対の端へずらして置くことはしない。
+                    // どこにも置けない（ほかのラベル・線・棒と重なる）ラベルは出さない
+                    ["outEnd", "inEnd"];
     const labelRequestOf = (b: BarLayout): LabelRequest<TextLayout> => {
         const { bar, rect } = b;
         const lines = horizontal && !verticalText ? [labelTextOf(bar)] : [bar.labelText, ...(bar.rateText ? [bar.rateText] : [])];
@@ -1155,15 +1186,12 @@ function layoutWith(
         // 棒の先（増えた棒・正の合計は値の大きい側、減った棒・負の合計は小さい側）と、そこから外へ向かう画面の向き
         const positive = bar.value >= 0;
         const endAt = positive ? highEnd : lowEnd;
-        const startAt = positive ? lowEnd : highEnd;
         const outward = positive ? growth : -growth;
         const centerOf = (spot: Spot): number => {
             const half = alongValue / 2;
             switch (spot) {
                 case "outEnd":
                     return endAt + outward * (half + 4);
-                case "outStart":
-                    return startAt - outward * (half + 4);
                 // 棒の中は、端から 2px（背景を出すなら背景の四角が端から 2px）空ける
                 case "inEnd":
                     return endAt - outward * (half + 2 + fillPad);
@@ -1181,7 +1209,7 @@ function layoutWith(
         const segmentColor = bar.kind === BAR_KINDS.subtotal ? subtotalPaint(style, rawColor).under : rawColor;
         const explicit = isTotalBar(bar) ? style.dataLabels.totalFont.color : style.dataLabels.font.color;
         const candidates = spots.map((spot): Candidate<TextLayout> => {
-            const inside = spot !== "outEnd" && spot !== "outStart";
+            const inside = spot !== "outEnd";
             const at = centerOf(spot);
             const cx = horizontal ? at : across;
             const cy = horizontal ? across : at;
@@ -1196,9 +1224,7 @@ function layoutWith(
             const color =
                 tone ||
                 explicit ||
-                (inside
-                    ? readableText(base, "#FFFFFF", INSIDE_TEXT_CONTRAST)
-                    : readableText(base, LABEL_OUTSIDE_COLOR, OUTSIDE_TEXT_CONTRAST));
+                autoLabelColor(inside, base);
             const font = { ...baseFont, color };
             // 真ん中 (cx, cy) に置く。複数行は 1 行目のベースラインを上へずらす
             const firstBaseline = font.size * 0.35 - ((lines.length - 1) * lineHeight) / 2;
@@ -1256,10 +1282,41 @@ function layoutWith(
         return { owner, candidates: texts.map((item) => ({ item, box: boxOf(item, HIT_PAD) })) };
     };
     const nameRequests: Array<{ ref: ReferenceLine; request: LabelRequest<TextLayout> }> = [];
-    const pairs: Array<[ViewModel["target"], ReferenceLine | null, string]> = [
-        [viewModel.constantLine, constantLine, "ref:constant"],
-        [viewModel.target, target, "ref:target"],
-    ];
+    const pairs: Array<[ViewModel["target"], ReferenceLine | null, string]> = [[viewModel.target, target, "ref:target"]];
+    // 定数線のデータ ラベルは標準の「水平方向の位置」「縦位置」で決まった場所に置く（スクロールしない側。ほかのラベルは避けない。
+    // 文字の縁で読めるようにする）。1.15.5.16 までは目標の名前と同じく、ラベルを避けて置いていた
+    let constantBox: Rect | null = null;
+    const cl = viewModel.constantLine;
+    if (constantLine && cl?.label) {
+        const cs = cl.style;
+        const fontSize = cs.labelFontSize * PT_TO_PX;
+        const font: RenderFont = { ...categoryFont, size: fontSize, weight: "normal", style: "normal", decoration: "none", color: cs.labelColor };
+        const at = horizontal ? constantLine.line.x1 : constantLine.line.y1;
+        const valueRange: [number, number] = horizontal ? [plot.x, plot.x + plot.width] : [plot.y, plot.y + plot.height];
+        const categoryRange: [number, number] = horizontal ? [plot.y, plot.y + plot.height] : [plot.x, plot.x + plot.width];
+        const [spot] = placeReferenceLabels(
+            [{ label: cl.label, at }],
+            !horizontal,
+            valueRange,
+            categoryRange,
+            fontSize,
+            (text) => measureTextWidth(text, specOf(font)),
+            cs.labelAvoidOverlap,
+            cs.labelHorizontal,
+            cs.labelVertical
+        );
+        constantLine.label = {
+            x: spot.x,
+            y: spot.y,
+            anchor: spot.anchor,
+            lines: [cl.label],
+            rotate: 0,
+            font,
+            lineHeight: fontSize + 2,
+            halo: { color: style.highContrast?.background ?? style.background, width: 3 },
+        };
+        constantBox = boxOf(constantLine.label, HIT_PAD);
+    }
     for (const [source, ref, owner] of pairs) {
         const request = ref ? nameRequestOf(source, ref, owner) : null;
         if (ref && request) nameRequests.push({ ref, request });
@@ -1267,9 +1324,16 @@ function layoutWith(
 
     if (!scrollAxis) {
         // スクロールしないときは、ラベルと線の名前を 1 度に置く（名前はラベルのあと）
-        const placed = placeLabels([...labelRequests, ...nameRequests.map((n) => n.request)], contentObstacles, { bounds: contentBox });
+        // データ ラベルは定数線のデータ ラベルを避けない（標準と同じ）。目標の名前は両方を避ける
+        const placed = placeLabels(labelRequests, contentObstacles, { bounds: contentBox });
         labelled.forEach((b, i) => (b.label = placed[i]?.item ?? null));
-        nameRequests.forEach((n, i) => (n.ref.label = placed[labelRequests.length + i]?.item ?? null));
+        const labelBoxes = labelled.flatMap((b) => (b.label ? [asBox(boxOf(b.label, HIT_PAD))] : []));
+        const names = placeLabels(
+            nameRequests.map((n) => n.request),
+            [...contentObstacles, ...labelBoxes, ...(constantBox ? [asBox(constantBox)] : [])],
+            { bounds: contentBox }
+        );
+        nameRequests.forEach((n, i) => (n.ref.label = names[i]?.item ?? null));
     } else {
         // スクロールするときは、ラベルは中身の座標で置く。線の名前は動かない側（ビューの座標）に描くので、
         // 動かない物（目盛り・凡例など）と項目名の側、もう 1 本の名前だけを避ける（棒とラベルはスクロールで動く）
@@ -1277,7 +1341,7 @@ function layoutWith(
         labelled.forEach((b, i) => (b.label = placed[i]?.item ?? null));
         const names = placeLabels(
             nameRequests.map((n) => n.request),
-            [...overlayBoxes.map(asBox), nearBand],
+            [...overlayBoxes.map(asBox), nearBand, ...(constantBox ? [asBox(constantBox)] : [])],
             { bounds: { x: 0, y: 0, width: W, height: H } }
         );
         nameRequests.forEach((n, i) => (n.ref.label = names[i]?.item ?? null));

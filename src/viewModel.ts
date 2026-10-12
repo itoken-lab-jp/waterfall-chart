@@ -16,6 +16,7 @@
  * どの形でも、増減の合計 ＝ 最後の合計 − 最初の合計 になる（検算できる形）。
  */
 
+import { REFERENCE_LABEL_TEXTS, ReferenceLineStyle, referenceLabelOf, referenceLineStyleOf, referenceLineSvgStyle, VALUE_SHADE_REGIONS } from "./shared/referenceLine";
 import powerbi from "powerbi-visuals-api";
 import { scaleLinear } from "d3-scale";
 import { formattingSettings } from "powerbi-visuals-utils-formattingmodel";
@@ -49,11 +50,14 @@ import {
 import { Formatter, LEVEL_SEPARATOR, ParsedItem, Parsed, parse } from "./data";
 import { formatValue, resolveUnit, unitBadgeOf } from "./unitUtils";
 import { ticksUpTo, tickCountOf, boundOf } from "./shared/ticks";
-import { gridDashOf, lineCapOf, CUSTOM_LINE_STYLE } from "./shared/gridlines";
+import { gridDashOf, lineCapOf, lineStrokeOf, CUSTOM_LINE_STYLE } from "./shared/gridlines";
 import { SCROLL_STARTS } from "./shared/scrollStart";
+import { HighContrastColors, highContrastOf } from "./shared/highContrast";
+import { clampFontSize } from "./shared/textStyle";
+import { DRILL_PATH_SEPARATOR, SERIES_TRUNCATED_TITLE, SERIES_TRUNCATED_NOTICE } from "./shared/warnings";
 import { blend } from "./shared/color";
 import { Halo, haloOf, NO_HALO } from "./shared/halo";
-import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR, isPercentFormat, percentDigitsOf, formatPercent } from "./shared/numberFormat";
+import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, sentimentTextColors, ownToneColor, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR, isPercentFormat, percentDigitsOf, formatPercent } from "./shared/numberFormat";
 
 export { tickCountOf, gridDashOf, blend, boundOf };
 
@@ -169,7 +173,7 @@ export interface LegendItem {
     /** 系列か、棒の種類（増加・減少・合計・その他）か、目標の線 */
     kind: "series" | BarKind | "target";
     /** 目標の線の印（線の太さと種類。グラフの線と同じ種類で、凡例では太さを 3px までにする）。棒の項目は無し */
-    line?: { width: number; dash: string | null };
+    line?: { width: number; dash: string | null; cap?: "round" | "square" | "butt" };
 }
 
 /** 凡例の印の線の太さの上限（太い線は凡例の行に収まらない） */
@@ -193,6 +197,14 @@ export interface TargetLine {
     color: string;
     width: number;
     dash: string | null;
+    /** 線の端の形（点線は丸い端で点にする） */
+    cap?: "round" | "square" | "butt";
+}
+
+/** 定数線。見た目は shared/referenceLine.ts の部品。shadeRegion は網掛けを値の小さい側・大きい側のどちらに塗るか */
+export interface ConstantLine extends TargetLine {
+    style: ReferenceLineStyle;
+    shadeRegion: "below" | "above";
 }
 
 /** 文字の見た目。size はポイント（描画でピクセルに直す）。color が空なら自動 */
@@ -214,7 +226,7 @@ export interface ViewStyle {
     orientation: Orientation;
     /** 軸を切った印の形 */
     breakStyle: BreakStyle;
-    connectors: { show: boolean; color: string; width: number; dash: string | null };
+    connectors: { show: boolean; color: string; width: number; dash: string | null; cap?: "round" | "square" | "butt" };
     dataLabels: {
         show: boolean;
         /** color が空なら自動（棒の外は灰色、棒の中は棒の色に合わせて白か黒） */
@@ -254,7 +266,7 @@ export interface ViewStyle {
     /** 軸を切った印の塗り（背景と同じ色） */
     background: string;
     /** ハイコントラストのときの前景・背景・選択の色。そうでなければ null */
-    highContrast: { foreground: string; background: string; selected: string } | null;
+    highContrast: HighContrastColors | null;
 }
 
 export interface ViewModel {
@@ -279,7 +291,7 @@ export interface ViewModel {
     legend: LegendItem[];
     target: TargetLine | null;
     /** 定数線（固定の値）。出さなければ null */
-    constantLine: TargetLine | null;
+    constantLine: ConstantLine | null;
     hasHighlights: boolean;
     /** 行（項目）が上限（30,000）に達した（data.ts の ROW_LIMIT） */
     truncated: boolean;
@@ -306,7 +318,9 @@ export const LANDING_MESSAGE =
 
 export const TRUNCATED_NOTICE = "行が 30,000 件に達したので、先頭の 30,000 件で描いています。合計・小計・両端は読み込めた行で計算しています。フィルターで絞ってください。";
 
-export const SERIES_TRUNCATED_NOTICE = "凡例の値が 2,000 に達したので、先頭の 2,000 で描いています。フィルターで絞ってください。";
+export { SERIES_TRUNCATED_TITLE, SERIES_TRUNCATED_NOTICE };
+/** 行が上限に達したときの警告の題 */
+export const TRUNCATED_TITLE = "すべての行を読み込めていません";
 
 const RATE_NAMES: Record<string, string> = {
     [RATE_TYPES.growth]: "伸び率",
@@ -318,14 +332,14 @@ function colorOf(slice: { value: { value: string } }): string {
     return slice.value?.value ?? "";
 }
 
-export function dashOf(style: string, width: number): string | null {
-    if (style === LINE_STYLES.dashed) return `${Math.max(2, width * 4)} ${Math.max(2, width * 2)}`;
-    if (style === LINE_STYLES.dotted) return `${Math.max(1, width)} ${Math.max(2, width * 2)}`;
-    return null;
+/** 線（つなぎの線・目標・定数線）の模様と端の形。共通の線の作り（lineStrokeOf）で、模様は線の幅に比例させる */
+export function strokeOf(style: string, width: number): { dash: string | null; cap: "round" | "square" | "butt" } {
+    const stroke = lineStrokeOf({ lineStyle: style, dashArray: "", dashCap: "", scaleWithWidth: true }, width);
+    return { dash: stroke.dashArray ?? null, cap: stroke.lineCap };
 }
 
 /** ドリルダウンした位置の区切り */
-export const DRILL_PATH_SEPARATOR = " ＞ ";
+export { DRILL_PATH_SEPARATOR };
 
 const clamp = (value: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, value));
 /** 数でなければ fallback（0 は 0 のまま） */
@@ -340,7 +354,8 @@ const DEFAULT_SUBTOTAL_TRANSPARENCY = 50;
 function fontOf(control: formattingSettings.FontControl, color: string): TextStyle {
     return {
         family: control.fontFamily.value || DEFAULT_FONT_FAMILY,
-        size: Number(control.fontSize.value) || 9,
+        // 書式ペインの範囲（8〜32pt）に丸める
+        size: clampFontSize(Number(control.fontSize.value) || 9, 9),
         bold: !!control.bold?.value,
         italic: !!control.italic?.value,
         underline: !!control.underline?.value,
@@ -350,13 +365,7 @@ function fontOf(control: formattingSettings.FontControl, color: string): TextSty
 
 function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): ViewStyle {
     const palette = host.colorPalette as ISandboxExtendedColorPalette;
-    const hc = palette.isHighContrast
-        ? {
-              foreground: palette.foreground?.value ?? "#000000",
-              background: palette.background?.value ?? "#FFFFFF",
-              selected: palette.foregroundSelected?.value ?? palette.foreground?.value ?? "#000000",
-          }
-        : null;
+    const hc = highContrastOf(palette);
     // ハイコントラストでは、文字・線はすべて前景色にする
     const ink = (color: string) => hc?.foreground ?? color;
     const connectorWidth = clamp(Number(settings.connectors.width.value) || 1, 0.5, 10);
@@ -384,7 +393,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
             show: settings.connectors.show.value ?? true,
             color: ink(colorOf(settings.connectors.color) || palette.foregroundNeutralTertiary?.value || "#A19F9D"),
             width: connectorWidth,
-            dash: dashOf(dropdownValue(settings.connectors.lineStyle, LINE_STYLES.solid), connectorWidth),
+            ...strokeOf(dropdownValue(settings.connectors.lineStyle, LINE_STYLES.solid), connectorWidth),
         },
         dataLabels: {
             show: labels.show.value ?? true,
@@ -431,7 +440,8 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
             width: gridWidth,
             dash: gridDashOf(gridStyle, gridWidth, settings.gridlines.horizontalScaleWithWidth.value ?? false, gridCustom),
             // 点線（細かい点）は丸い端。カスタムはダッシュ キャップ
-            cap: gridStyle === CUSTOM_LINE_STYLE ? lineCapOf(gridStyle, gridCustom) : undefined,
+            // 点線は「幅で拡大縮小」でも丸い端の点にする（カスタムはダッシュ キャップ）
+            cap: gridStyle === CUSTOM_LINE_STYLE || gridStyle === LINE_STYLES.dotted ? lineCapOf(gridStyle, gridCustom) : undefined,
         },
         legend: {
             show: settings.legend.show.value ?? true,
@@ -1141,17 +1151,20 @@ export function transform(
         plus: settings.dataLabels.plusSign.value ?? true,
     };
     // 目標の線・定数線の値にも使う（+ は付けない）
-    const labelOf = (v: number, plus = false) =>
+    const labelOf = (v: number, plus = false, precision = labelPrecision) =>
         percentValue
-            ? formatPercent(v, labelPrecision, valuePercentDigits, { ...signStyle, plus })
+            ? formatPercent(v, precision, valuePercentDigits, { ...signStyle, plus })
             : labelUnit
-            ? formatSigned(v, labelUnit.divisor, labelPrecision, { ...signStyle, plus }, labelUnit.unitWord)
-            : formatSigned(v, unit.divisor, labelPrecision, { ...signStyle, plus });
+            ? formatSigned(v, labelUnit.divisor, precision, { ...signStyle, plus }, labelUnit.unitWord)
+            : formatSigned(v, unit.divisor, precision, { ...signStyle, plus });
     // 増減・小計の値の文字を符号で塗る（見える符号で決める。▲0 はマイナス、±0 は塗らない）
     const toneMode = dropdownValue(settings.dataLabels.toneMode, TONE_MODES.none);
+    // 書式ペインで決めていなければ、テーマの良い・悪いの色を字に使える濃さにして使う
+    const savedLabels = dataView?.metadata?.objects?.dataLabels;
+    const themeTones = sentimentTextColors(host.colorPalette as ISandboxExtendedColorPalette);
     const toneColors = {
-        good: colorOf(settings.dataLabels.positiveColor) || DEFAULT_GOOD_COLOR,
-        bad: colorOf(settings.dataLabels.negativeColor) || DEFAULT_BAD_COLOR,
+        good: ownToneColor(colorOf(settings.dataLabels.positiveColor), savedLabels?.positiveColor, DEFAULT_GOOD_COLOR) || themeTones.good,
+        bad: ownToneColor(colorOf(settings.dataLabels.negativeColor), savedLabels?.negativeColor, DEFAULT_BAD_COLOR) || themeTones.bad,
     };
     const labelDivisor = labelUnit ? labelUnit.divisor : unit.divisor;
     for (const bar of bars) {
@@ -1183,31 +1196,41 @@ export function transform(
         target = {
             value,
             name: parsed.target.name,
-            // 名前は凡例に出す。グラフの中の名前と値は既定で出さない（ユーザー「目標のラベルの位置が違和感」）
+            // 名前は凡例に出す。グラフの中の名前と値は既定で出さない（ユーザー決定。目標のラベルの位置に違和感があるため）
             label: (settings.target.labelShow.value ?? false) ? `${parsed.target.name} ${labelOf(value)}` : "",
             tooltip: [{ displayName: parsed.target.name, value: parsed.target.format(value) }],
             color: ink(colorOf(settings.target.color) || "#252423"),
             width,
-            dash: dashOf(dropdownValue(settings.target.lineStyle, LINE_STYLES.dashed), width),
+            ...strokeOf(dropdownValue(settings.target.lineStyle, LINE_STYLES.dashed), width),
         };
     }
 
     // --- 定数線（固定の値。軸は広げない） ---------------------------------------------------
-    let constantLine: TargetLine | null = null;
+    let constantLine: ConstantLine | null = null;
     const constant = settings.constantLine;
     if (constant.show.value ?? false) {
         const value = Number(constant.value.value) || 0;
-        const width = clamp(Number(constant.width.value) || 1, 0.5, 10);
-        const name = (constant.labelText.value ?? "").trim();
+        const name = (constant.labelText.value ?? "").trim() || "定数線";
+        const read = referenceLineStyleOf(constant.parts, true);
+        // ハイコントラストでは線・ラベルを前景色にし、網掛けは薄く塗る（棒を隠さない）
+        const lineStyle: ReferenceLineStyle = style.highContrast
+            ? { ...read, color: style.highContrast.foreground, labelColor: style.highContrast.foreground, shadeColor: style.highContrast.foreground, transparency: 0, shadeTransparency: Math.max(read.shadeTransparency, 50) }
+            : read;
+        const precision = dropdownValue(constant.labelPrecision, "auto");
+        const valueText = labelOf(value, false, precision === "auto" ? labelPrecision : precision);
+        const svg = referenceLineSvgStyle(lineStyle);
         constantLine = {
             value,
             name,
-            // 定数線は標準と同じくグラフの中に名前と値を出す（凡例には入れない）
-            label: (constant.labelShow.value ?? true) ? `${name ? `${name} ` : ""}${labelOf(value)}` : "",
+            // 定数線は標準と同じくグラフの中にスタイルで選んだ中身を出す（凡例には入れない）
+            label: lineStyle.labelShow ? referenceLabelOf(dropdownValue(constant.labelStyle, REFERENCE_LABEL_TEXTS.value), name, valueText) : "",
             tooltip: [],
-            color: ink(colorOf(constant.color) || "#605E5C"),
-            width,
-            dash: dashOf(dropdownValue(constant.lineStyle, LINE_STYLES.dashed), width),
+            color: lineStyle.color,
+            width: lineStyle.width,
+            dash: svg.strokeDasharray ?? null,
+            cap: svg.strokeLinecap,
+            style: lineStyle,
+            shadeRegion: dropdownValue(constant.shadeRegion, VALUE_SHADE_REGIONS.below) === VALUE_SHADE_REGIONS.above ? "above" : "below",
         };
     }
 
@@ -1227,8 +1250,9 @@ export function transform(
     // --- 軸のタイトル -----------------------------------------------------------------------
     // 自動は、値の軸は値のフィールドの名前、項目の軸は見えているレベルの名前（ドリルした親のレベルは除く）
     const unitLabel = percentValue ? "" : `${unit.unitWord}${(axisSettings.unitText.value ?? "").trim()}`;
+    // 単位のみは括弧に入れる（上の単位のラベルと同じ書き方）。単位が無ければタイトルのまま
     const titleOf = (styleValue: string, text: string, unitText: string): string => {
-        if (styleValue === TITLE_STYLES.showUnitOnly) return unitText;
+        if (styleValue === TITLE_STYLES.showUnitOnly) return unitText ? `(${unitText})` : text;
         if (styleValue === TITLE_STYLES.showBoth) return unitText ? `${text} (${unitText})` : text;
         return text;
     };
@@ -1248,11 +1272,12 @@ export function transform(
     }
     const categorySettings = settings.categoryAxis;
     if (categorySettings.titleShow.value ?? false) {
-        const text = titleOf(
-            dropdownValue(categorySettings.titleStyle, TITLE_STYLES.showTitleOnly),
-            (categorySettings.titleText.value ?? "").trim() || parsed.levelNames.slice(commonDepth).join(LEVEL_SEPARATOR),
-            ""
-        );
+        // 項目の軸に単位は無い。「単位のみ」は今までどおりタイトルを出さない（値の軸の「単位が無ければタイトル」とは分ける）
+        const categoryStyle = dropdownValue(categorySettings.titleStyle, TITLE_STYLES.showTitleOnly);
+        const text =
+            categoryStyle === TITLE_STYLES.showUnitOnly
+                ? ""
+                : titleOf(categoryStyle, (categorySettings.titleText.value ?? "").trim() || parsed.levelNames.slice(commonDepth).join(LEVEL_SEPARATOR), "");
         style.categoryAxis.title = text
             ? { text, font: fontOf(categorySettings.titleFont, ink(colorOf(categorySettings.titleColor) || "#252423")) }
             : null;
@@ -1296,7 +1321,7 @@ export function transform(
                       kind: "target",
                       line: {
                           width: Math.min(target.width, LEGEND_LINE_MAX),
-                          dash: dashOf(dropdownValue(settings.target.lineStyle, LINE_STYLES.dashed), Math.min(target.width, LEGEND_LINE_MAX)),
+                          ...strokeOf(dropdownValue(settings.target.lineStyle, LINE_STYLES.dashed), Math.min(target.width, LEGEND_LINE_MAX)),
                       },
                   } as LegendItem,
               ]

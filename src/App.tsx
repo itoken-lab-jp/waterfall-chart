@@ -18,6 +18,10 @@ import powerbi from "powerbi-visuals-api";
 import { BAR_KINDS, Bar, BarKind, Segment, TooltipTarget, ViewModel } from "./viewModel";
 import { ChartLayout, Line, Rect, SegmentLayout, TextLayout, barPath, layoutOf, subtotalPaint } from "./layout";
 import { SCROLL_STARTS, useScrollStart } from "./shared/scrollStart";
+import { selectKeyDown } from "./shared/keyboard";
+import { LegendArrowButton } from "./shared/LegendArrowButton";
+import { controlColorsOf } from "./shared/controls";
+import { DARK_TEXT } from "./shared/color";
 import { CopyImageButton } from "./shared/CopyImageButton";
 import { haloStyle } from "./shared/halo";
 
@@ -48,6 +52,8 @@ export interface AppProps {
     onTooltipHide?: () => void;
     /** 操作できる場所か。ダッシュボードのタイルなどでは、画像のコピーのボタンを出さない */
     interactive?: boolean;
+    /** レポートを編集中か（Desktop・Web の編集）。閲覧中（Web の閲覧）は空のときの案内を出さず、標準と同じく何も描かない */
+    editing?: boolean;
     /** 画像のコピーのボタンの右クリックで、ブラウザーのメニュー（「画像をコピー」）を出すか（Desktop では出ないので false） */
     browserMenu?: boolean;
 }
@@ -128,6 +134,7 @@ export const App: React.FC<AppProps> = ({
     onTooltipMove,
     onTooltipHide,
     interactive = true,
+    editing = true,
     browserMenu = false,
 }) => {
     // 斜線の模様の id を、同じページのほかのウォーターフォールとぶつけない（SVG の id はページ全体で引かれる）
@@ -152,6 +159,17 @@ export const App: React.FC<AppProps> = ({
         },
     };
 
+    // 凡例が入りきらないときに出しているページ。凡例の項目が変わったら最初のページに戻す
+    // （描いたあとで戻すと、前のページで 1 回描いてしまうので、項目の並びと一緒に持って描くときに比べる）
+    const legendKey = JSON.stringify(viewModel.legend.map((item) => item.name));
+    const [legendPageState, setLegendPageState] = React.useState({ key: legendKey, page: 0 });
+    const legendPage = legendPageState.key === legendKey ? legendPageState.page : 0;
+    const setLegendPage = (page: number) => setLegendPageState({ key: legendKey, page });
+
+    // フィールドを入れる前の案内は、編集中だけ出す（閲覧中は標準と同じく何も描かない）
+    if (viewModel.isEmpty && !editing) {
+        return <div className="wf-container" style={{ width: viewport.width, height: viewport.height }} {...backgroundHandlers} />;
+    }
     if (viewModel.isEmpty) {
         return (
             <div className="wf-landing" {...backgroundHandlers}>
@@ -160,7 +178,7 @@ export const App: React.FC<AppProps> = ({
         );
     }
 
-    const layout: ChartLayout | null = layoutOf(viewModel, viewport);
+    const layout: ChartLayout | null = layoutOf(viewModel, viewport, legendPage);
     if (!layout) {
         return <div className="wf-container" style={{ width: viewport.width, height: viewport.height }} {...backgroundHandlers} />;
     }
@@ -186,20 +204,26 @@ export const App: React.FC<AppProps> = ({
         if (ids.length) onSelect(ids, multi);
         else onClearSelection();
     };
-    const keyHandler = (ids: ISelectionId[]) => (e: React.KeyboardEvent) => {
-        if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            e.stopPropagation();
-            select(ids, e.ctrlKey || e.metaKey);
-        } else if (e.key === "Escape") {
-            onClearSelection();
-        }
-    };
+    // Enter・Space で選ぶ（Ctrl で足す）、Esc で外す。役割と名前は一覧の選択肢として各要素に付ける
+    const keyHandler = (ids: ISelectionId[]) => selectKeyDown((multi) => select(ids, multi), onClearSelection);
 
     // 中身の大きさ（スクロールの方向は中身の長さ、もう一方は窓と同じ）
     const contentWidth = scroll.axis === "x" ? scroll.content : region.width;
     const contentHeight = scroll.axis === "y" ? scroll.content : region.height;
     const referenceLines = [layout.target, layout.constantLine].filter((r): r is NonNullable<typeof r> => r !== null);
+    const referenceLine = (ref: (typeof referenceLines)[number]) => (
+        <line
+            key={ref === layout.target ? "reference-target" : "reference-constant"}
+            className={ref === layout.target ? "wf-target" : "wf-constant-line"}
+            {...lineProps(ref.line)}
+            stroke={ref.color}
+            strokeOpacity={ref.opacity}
+            strokeWidth={ref.width}
+            strokeDasharray={ref.dash ?? undefined}
+            strokeLinecap={ref.cap}
+            pointerEvents="none"
+        />
+    );
 
     return (
         <div className="wf-container" style={{ width: viewport.width, height: viewport.height }} {...backgroundHandlers}>
@@ -209,7 +233,7 @@ export const App: React.FC<AppProps> = ({
                 onScroll={scrollStart.onScroll}
                 style={{ left: region.x, top: region.y, width: region.width, height: region.height }}
             >
-                <svg className="wf-svg" width={contentWidth} height={contentHeight} role="img" aria-label="ウォーターフォール">
+                <svg className="wf-svg" width={contentWidth} height={contentHeight} role="group" aria-label="ウォーターフォール">
                     <g transform={`translate(${-region.x} ${-region.y})`}>
                         {style.gridlines.show &&
                             layout.gridlines.map((g, i) => (
@@ -224,6 +248,25 @@ export const App: React.FC<AppProps> = ({
                                     strokeLinecap={style.gridlines.cap ?? (style.gridlines.dash === "1 3" ? "round" : undefined)}
                                 />
                             ))}
+
+                        {/* 定数線の網掛け領域と、背面の線（棒の後ろ） */}
+                        {referenceLines.map(
+                            (ref, i) =>
+                                ref.shade && (
+                                    <rect
+                                        key={`reference-shade-${i}`}
+                                        className="wf-constant-shade"
+                                        x={ref.shade.x}
+                                        y={ref.shade.y}
+                                        width={ref.shade.width}
+                                        height={ref.shade.height}
+                                        fill={ref.shade.color}
+                                        fillOpacity={ref.shade.opacity}
+                                        pointerEvents="none"
+                                    />
+                                )
+                        )}
+                        {referenceLines.filter((ref) => ref.layer === "back").map(referenceLine)}
 
                         {layout.bars.map((b, index) => {
                             const { bar } = b;
@@ -334,6 +377,7 @@ export const App: React.FC<AppProps> = ({
                                     stroke={style.connectors.color}
                                     strokeWidth={style.connectors.width}
                                     strokeDasharray={style.connectors.dash ?? undefined}
+                                    strokeLinecap={style.connectors.cap}
                                     pointerEvents="none"
                                 />
                             ))}
@@ -348,17 +392,7 @@ export const App: React.FC<AppProps> = ({
                             </g>
                         ))}
 
-                        {referenceLines.map((ref, i) => (
-                            <line
-                                key={`reference-${i}`}
-                                className={ref === layout.target ? "wf-target" : "wf-constant-line"}
-                                {...lineProps(ref.line)}
-                                stroke={ref.color}
-                                strokeWidth={ref.width}
-                                strokeDasharray={ref.dash ?? undefined}
-                                pointerEvents="none"
-                            />
-                        ))}
+                        {referenceLines.filter((ref) => ref.layer !== "back").map(referenceLine)}
                         {/* 目標の線はマウスを当てるとツールヒントで名前と値を出す（凡例を消しても名前が分かるように）。当たりは線より少し太く */}
                         {referenceLines.map(
                             (ref, i) =>
@@ -419,8 +453,22 @@ export const App: React.FC<AppProps> = ({
                 {referenceLines.map((ref, i) => ref.label && <Text key={`reference-label-${i}`} layout={ref.label} className="wf-reference-label" />)}
 
                 {layout.legend && (
-                    <g className="wf-legend" role="listbox" aria-label="凡例">
+                    <g className="wf-legend" role="group" aria-label="凡例">
                         {layout.legend.title && <Text layout={layout.legend.title} className="wf-legend-title" />}
+                        {layout.legend.arrows &&
+                            [layout.legend.arrows.prev, layout.legend.arrows.next].map((arrow, k) => (
+                                <LegendArrowButton
+                                    key={`legend-arrow-${k}`}
+                                    arrow={arrow}
+                                    color={layout.legend!.font.color}
+                                    // Fluent 2 の枠なしのボタンの色。テーマの地から作る（ハイコントラストでは前景色と背景色だけ）
+                                    colors={hc ? controlColorsOf(hc.foreground, hc.background, true) : controlColorsOf(DARK_TEXT, style.background)}
+                                    label={k === 0 ? "凡例の前のページ" : "凡例の次のページ"}
+                                    onPress={() => setLegendPage(Math.max(0, Math.min(layout.legend!.pageCount - 1, layout.legend!.page + (k === 0 ? -1 : 1))))}
+                                />
+                            ))}
+                        {/* 一覧の選択肢は項目だけ（矢印・タイトルは一覧の外） */}
+                        <g role="listbox" aria-label="凡例の項目">
                         {layout.legend.items.map(({ item, index, x, swatchWidth, y, textY, text }) => {
                             const ids = item.selectionId ? [item.selectionId] : [];
                             const selectable = ids.length > 0;
@@ -453,6 +501,7 @@ export const App: React.FC<AppProps> = ({
                                             stroke={item.color}
                                             strokeWidth={item.line.width}
                                             strokeDasharray={item.line.dash ?? undefined}
+                                            strokeLinecap={item.line.cap}
                                         />
                                     ) : (
                                         // 棒に角丸があれば、印も値の向きの端（縦向きは上、横向きは右）を丸める
@@ -496,6 +545,7 @@ export const App: React.FC<AppProps> = ({
                                 </g>
                             );
                         })}
+                        </g>
                     </g>
                 )}
 
@@ -513,7 +563,7 @@ export const App: React.FC<AppProps> = ({
             {interactive && viewModel.copyButton && (
                 <CopyImageButton
                     alt="ウォーターフォールの画像"
-                    stamp={[viewModel, viewport.width, viewport.height, selectedIds]}
+                    stamp={[viewModel, viewport.width, viewport.height, selectedIds, legendPage]}
                     background={style.background}
                     colors={hc ? { foreground: hc.foreground, background: hc.background } : undefined}
                     browserMenu={browserMenu}

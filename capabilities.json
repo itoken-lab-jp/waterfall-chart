@@ -1034,8 +1034,8 @@
                         }
                     }
                 },
-                "width": {
-                    "displayName": "幅 (px)",
+                "transparency": {
+                    "displayName": "透過性 (%)",
                     "type": {
                         "numeric": true
                     }
@@ -1046,8 +1046,118 @@
                         "enumeration": []
                     }
                 },
+                "dashArray": {
+                    "displayName": "ダッシュ配列",
+                    "type": {
+                        "text": true
+                    }
+                },
+                "scaleWithWidth": {
+                    "displayName": "幅で拡大縮小",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "dashCap": {
+                    "displayName": "ダッシュ キャップ",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "width": {
+                    "displayName": "幅 (px)",
+                    "type": {
+                        "numeric": true
+                    }
+                },
+                "layer": {
+                    "displayName": "位置",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "shadeShow": {
+                    "displayName": "網掛け領域",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "shadeRegion": {
+                    "displayName": "位置",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "shadeMatchLine": {
+                    "displayName": "線の色を一致させる",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "shadeColor": {
+                    "displayName": "カラー",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "shadeTransparency": {
+                    "displayName": "透過性 (%)",
+                    "type": {
+                        "numeric": true
+                    }
+                },
                 "labelShow": {
-                    "displayName": "名前と値",
+                    "displayName": "データ ラベル",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "labelHorizontal": {
+                    "displayName": "水平方向の位置",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "labelVertical": {
+                    "displayName": "縦位置",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "labelStyle": {
+                    "displayName": "スタイル",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "labelColor": {
+                    "displayName": "カラー",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "labelFontSize": {
+                    "displayName": "テキストのサイズ",
+                    "type": {
+                        "numeric": true
+                    }
+                },
+                "labelPrecision": {
+                    "displayName": "小数点以下桁数の値",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "labelAvoidOverlap": {
+                    "displayName": "ラベルの重なりを避ける",
                     "type": {
                         "bool": true
                     }

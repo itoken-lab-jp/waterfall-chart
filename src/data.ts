@@ -14,6 +14,7 @@
 
 import powerbi from "powerbi-visuals-api";
 import { valueFormatter } from "powerbi-visuals-utils-formattingutils";
+import { ROW_LIMIT, SERIES_LIMIT } from "./shared/warnings";
 
 import { mergeOrders } from "./order";
 import { BLANK_TEXT } from "./shared/tooltip";
@@ -96,7 +97,7 @@ export interface Parsed {
     hierarchyName: string;
     /** 階層のレベルの名前（上から） */
     levelNames: string[];
-    /** 値のフィールドの名前（2 つ以上なら ", " でつなぐ）。軸のタイトルの自動 */
+    /** 値のフィールドの名前（2 つ以上なら標準と同じく「 および 」でつなぐ）。軸のタイトルの自動 */
     valueName: string;
     /** 系列のフィールドの名前。系列が無ければ空 */
     seriesName: string;
@@ -375,7 +376,7 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         items,
         hierarchyName: hierarchyColumns.map((c) => c.source.displayName).join(LEVEL_SEPARATOR),
         levelNames: hierarchyColumns.map((c) => c.source.displayName),
-        valueName: valueColumnsOf[0].map((c) => c.source.displayName).join(", "),
+        valueName: valueColumnsOf[0].map((c) => c.source.displayName).join(" および "),
         seriesName: seriesColumn?.displayName ?? "",
         origin: itemMeasure(originColumns),
         target: itemMeasure(targetColumns),
@@ -388,8 +389,7 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
 }
 
 /** capabilities の行（項目）と系列の上限 */
-export const ROW_LIMIT = 30000;
-export const SERIES_LIMIT = 2000;
+export { ROW_LIMIT, SERIES_LIMIT };
 
 /** 同じ行を指す ID を 1 つにする（イベントの行が分かれていても、項目は 1 回だけ選ぶ） */
 function dedupe(ids: ISelectionId[]): ISelectionId[] {
