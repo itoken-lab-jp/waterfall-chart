@@ -18,7 +18,7 @@ import powerbi from "powerbi-visuals-api";
 import { BAR_KINDS, Bar, BarKind, Segment, TooltipTarget, ViewModel } from "./viewModel";
 import { ChartLayout, Line, Rect, SegmentLayout, TextLayout, barPath, layoutOf, subtotalPaint } from "./layout";
 import { SCROLL_STARTS, useScrollStart } from "./shared/scrollStart";
-import { selectKeyDown } from "./shared/keyboard";
+import { selectKeyDown, selectKeyProps } from "./shared/keyboard";
 import { LegendArrowButton } from "./shared/LegendArrowButton";
 import { controlColorsOf } from "./shared/controls";
 import { DARK_TEXT } from "./shared/color";
@@ -426,17 +426,40 @@ export const App: React.FC<AppProps> = ({
                                     )
                             )}
 
-                        {layout.bars.map(
-                            (b) =>
-                                b.category && (
-                                    <Text
-                                        key={`category-${b.bar.key}`}
-                                        layout={b.category}
-                                        className={layout.rotatedCategories ? "wf-category wf-category-rotated" : "wf-category"}
-                                        title={b.category.title}
-                                    />
-                                )
-                        )}
+                        {/* カテゴリのラベルを押すと、その棒を選ぶ（標準と同じ。Ctrl で足す、Enter・Space も） */}
+                        {layout.bars.map((b) => {
+                            if (!b.category) return null;
+                            const ids = b.bar.selectionIds;
+                            const text = (
+                                <Text
+                                    key={`category-${b.bar.key}`}
+                                    layout={b.category}
+                                    className={layout.rotatedCategories ? "wf-category wf-category-rotated" : "wf-category"}
+                                    title={b.category.title}
+                                    hover={ids.length > 0}
+                                />
+                            );
+                            // 選ぶものが無い棒（行の無い合計など）のラベルは、押せる当たりにしない（名前だけのボタンに Tab で止まらないように）
+                            if (!ids.length) return text;
+                            return (
+                                <g
+                                    key={`category-${b.bar.key}`}
+                                    className="wf-category-hit"
+                                    {...selectKeyProps({
+                                        label: b.bar.fullLabel,
+                                        pressed: ids.every((id) => selectedIds.some((s) => s.equals(id))),
+                                        onSelect: (multi) => select(ids, multi),
+                                        onClear: onClearSelection,
+                                    })}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        select(ids, e.ctrlKey || e.metaKey);
+                                    }}
+                                >
+                                    {text}
+                                </g>
+                            );
+                        })}
                     </g>
                 </svg>
             </div>

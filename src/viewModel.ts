@@ -698,9 +698,11 @@ export function transform(
     const connectMode = dropdownValue(settings.layout.connectMode, CONNECT_MODES.ends);
     const originMode = dropdownValue(settings.layout.originMode, ORIGIN_MODES.first);
     const othersOn = settings.others.show.value ?? false;
+    const hideZero = settings.layout.hideZero.value ?? false;
     const othersKeep = Math.max(1, Math.min(1000, Math.round(Number(settings.others.count.value) || 1)));
     const othersLabel = (settings.others.label.value ?? "").trim() || DEFAULT_OTHERS_LABEL;
     const totalShow = settings.layout.totalShow.value ?? true;
+    const leftBreakdown = settings.layout.leftBreakdown.value ?? false;
     const totalLabel = (settings.layout.totalLabel.value ?? "").trim() || DEFAULT_TOTAL_LABEL;
     const rateType = dropdownValue(settings.dataLabels.rateType, RATE_TYPES.none);
 
@@ -864,7 +866,8 @@ export function transform(
         from: number | null,
         to: number,
         start: { level: number; hLevel: number | null; contributionBase: number | null },
-        segmentKey: string
+        segmentKey: string,
+        withSubtotals = true
     ): { level: number; hLevel: number | null } => {
         let level = start.level;
         let hLevel = start.hLevel;
@@ -933,7 +936,9 @@ export function transform(
                 if (sectionBefore !== null) beforeSum = (beforeSum ?? 0) + sectionBefore;
                 if (sectionAfter !== null) afterSum = (afterSum ?? 0) + sectionAfter;
             }
-            const sorted = sortEntries(entries, order);
+            // 0 の項目を隠すときは、棒にしない（左端・右端の合計には上で入れてある）。凡例で積んで打ち消し合う項目は残す
+            const shown = hideZero ? entries.filter((e) => e.parts.some((p) => p.delta !== 0)) : entries;
+            const sorted = sortEntries(shown, order);
             const { kept, merged } = othersOn ? splitOthers(sorted, othersKeep) : { kept: sorted, merged: [] };
 
             for (const { item, parts } of kept) {
@@ -993,6 +998,7 @@ export function transform(
                 advanceHighlight(parts);
             }
 
+            if (!withSubtotals) continue;
             if (section.name !== null && from === null) {
                 // 合流する形・起点から積む形の小計は、そこまでの累計（軸から立つ棒）
                 totalBar("subtotal", section.name, level, hLevel, `${segmentKey}|${section.key}|subtotal`, [], [
@@ -1065,6 +1071,11 @@ export function transform(
             connectMode === CONNECT_MODES.all
                 ? Array.from({ length: Math.abs(rightIndex - leftIndex) + 1 }, (_, k) => leftIndex + k * step)
                 : [leftIndex, rightIndex];
+        if (leftBreakdown) {
+            // 左端の内訳を積む：左端の値を項目ごとに 0 から積み上げてから、左端の合計の棒を立てる（売上の科目 → 売上）。
+            // 内訳の中には小計を挟まない（小計の名前は差の側の段階の名前なので、内訳に立てると意味がずれる）
+            runSegment(null, sequence[0], { level: 0, hLevel: hasHighlights ? 0 : null, contributionBase: null }, "breakdown", false);
+        }
         eventTotal(sequence[0], "event0");
         let state = { level: totalOf(sequence[0]), hLevel: highlightTotalOf(sequence[0]) };
         for (let k = 1; k < sequence.length; k++) {
@@ -1101,7 +1112,8 @@ export function transform(
 
     // --- 起点の色：左端の合計（比べる形の左端のイベント、期首などの起点）だけ -------------------------------
     // 左端が増減の棒（計画と実績の差だけを並べる形など）なら、起点は無い
-    const first = bars[0];
+    // 左端の内訳を積むときは、内訳のあとに立つ左端の合計を起点の色にする
+    const first = bars.find((bar) => bar.key === "event0") ?? bars[0];
     const startBar = first && first.kind === BAR_KINDS.total && (first.totalRole === "event" || first.totalRole === "origin") ? first : null;
     if (startBar) {
         startBar.color = colors.start;

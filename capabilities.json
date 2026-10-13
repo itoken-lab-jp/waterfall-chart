@@ -173,6 +173,12 @@
                         "enumeration": []
                     }
                 },
+                "leftBreakdown": {
+                    "displayName": "左端の内訳を積む",
+                    "type": {
+                        "bool": true
+                    }
+                },
                 "totalShow": {
                     "displayName": "最後の合計",
                     "type": {
@@ -187,6 +193,12 @@
                 },
                 "copyButton": {
                     "displayName": "画像のコピー",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "hideZero": {
+                    "displayName": "0 の項目を隠す",
                     "type": {
                         "bool": true
                     }

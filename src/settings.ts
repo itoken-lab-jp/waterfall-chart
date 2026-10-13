@@ -222,6 +222,14 @@ export class LayoutCardSettings extends SimpleCard {
         value: ORIGIN_MODE_ITEMS[0],
     });
 
+    /** 比べる形で、左端の合計の前に左端の値を項目ごとに積む（売上の科目 → 売上 → 差。2026-10-13 ユーザー）。標準に無い項目 */
+    leftBreakdown = new formattingSettings.ToggleSwitch({
+        name: "leftBreakdown",
+        displayName: "左端の内訳を積む",
+        description: "左端の合計の前に、左端の値を項目ごとに 0 から積み上げる（売上の科目を積んでから売上の合計へ、など）。値が無い項目は積まない",
+        value: false,
+    });
+
     totalShow = new formattingSettings.ToggleSwitch({
         name: "totalShow",
         displayName: "最後の合計",
@@ -233,6 +241,14 @@ export class LayoutCardSettings extends SimpleCard {
         displayName: "最後の合計の名前",
         value: "",
         placeholder: DEFAULT_TOTAL_LABEL,
+    });
+
+    /** 増減が 0 の項目の棒と名前を出さない（凡例で積んで打ち消し合う項目は残す）。標準に無い項目 */
+    hideZero = new formattingSettings.ToggleSwitch({
+        name: "hideZero",
+        displayName: "0 の項目を隠す",
+        description: "増減が 0 の項目の棒と名前を出さない。凡例の値ごとの増減が打ち消し合って 0 になる項目は残す。左端・右端・小計の値は隠した項目も含めて出す",
+        value: false,
     });
 
     /** ドリルダウンしたとき、今いる位置（事業A ＞ 製品A1 など）を左上に出す（2026-09-25 ユーザー）。標準に無い項目 */
@@ -256,10 +272,12 @@ export class LayoutCardSettings extends SimpleCard {
         this.connectMode,
         this.leftEvent,
         this.rightEvent,
+        this.leftBreakdown,
         this.order,
         this.originMode,
         this.totalShow,
         this.totalLabel,
+        this.hideZero,
         this.drillPathShow,
         this.copyButton,
     ];
@@ -275,6 +293,7 @@ export class LayoutCardSettings extends SimpleCard {
         this.connectMode.visible = compare;
         this.leftEvent.visible = compare;
         this.rightEvent.visible = compare;
+        this.leftBreakdown.visible = compare;
         this.totalShow.visible = !compare;
         this.totalLabel.visible = !compare;
         this.originMode.visible = hasOrigin;
