@@ -24,6 +24,7 @@ import { controlColorsOf } from "./shared/controls";
 import { DARK_TEXT } from "./shared/color";
 import { CopyImageButton } from "./shared/CopyImageButton";
 import { haloStyle } from "./shared/halo";
+import { gridCutout, useGridMaskId } from "./shared/gridCutout";
 
 import IViewport = powerbi.IViewport;
 import ISelectionId = powerbi.visuals.ISelectionId;
@@ -199,6 +200,10 @@ export const App: React.FC<AppProps> = ({
         return isSelected(bar.selectionIds) || isSelected(segment.selectionIds) || (legendId !== null && isSelected([legendId]));
     };
     const selectionActive = !viewModel.hasHighlights && selectedIds.length > 0;
+    // 小計を透かして描くときは、目盛線を棒の形で切り抜く（目盛線はいちばん後ろ。半透明の小計の下で透けて見えないように）。
+    // mask は棒のまとまり（id が `${gridMaskId}-bars`）を写す
+    const gridMaskId = useGridMaskId("wf");
+    const gridMasked = style.gridlines.show && style.subtotalOpacity < 1 && layout.bars.some((b) => b.bar.kind === BAR_KINDS.subtotal);
 
     const select = (ids: ISelectionId[], multi: boolean) => {
         if (ids.length) onSelect(ids, multi);
@@ -235,19 +240,22 @@ export const App: React.FC<AppProps> = ({
             >
                 <svg className="wf-svg" width={contentWidth} height={contentHeight} role="group" aria-label="ウォーターフォール">
                     <g transform={`translate(${-region.x} ${-region.y})`}>
-                        {style.gridlines.show &&
-                            layout.gridlines.map((g, i) => (
-                                <line
-                                    key={`grid-${i}`}
-                                    className="wf-gridline"
-                                    {...lineProps(g)}
-                                    stroke={style.gridlines.color}
-                                    strokeWidth={style.gridlines.width}
-                                    strokeOpacity={style.gridlines.opacity}
-                                    strokeDasharray={style.gridlines.dash ?? undefined}
-                                    strokeLinecap={style.gridlines.cap ?? (style.gridlines.dash === "1 3" ? "round" : undefined)}
-                                />
-                            ))}
+                        {gridMasked && gridCutout(gridMaskId, `${gridMaskId}-bars`)}
+                        <g className="wf-gridlines" mask={gridMasked ? `url(#${gridMaskId})` : undefined}>
+                            {style.gridlines.show &&
+                                layout.gridlines.map((g, i) => (
+                                    <line
+                                        key={`grid-${i}`}
+                                        className="wf-gridline"
+                                        {...lineProps(g)}
+                                        stroke={style.gridlines.color}
+                                        strokeWidth={style.gridlines.width}
+                                        strokeOpacity={style.gridlines.opacity}
+                                        strokeDasharray={style.gridlines.dash ?? undefined}
+                                        strokeLinecap={style.gridlines.cap ?? (style.gridlines.dash === "1 3" ? "round" : undefined)}
+                                    />
+                                ))}
+                        </g>
 
                         {/* 定数線の網掛け領域と、背面の線（棒の後ろ） */}
                         {referenceLines.map(
@@ -268,104 +276,106 @@ export const App: React.FC<AppProps> = ({
                         )}
                         {referenceLines.filter((ref) => ref.layer === "back").map(referenceLine)}
 
-                        {layout.bars.map((b, index) => {
-                            const { bar } = b;
-                            const ids = bar.selectionIds;
-                            // 比べる形の小計は透かして描く。薄めるときも、透かした濃さから薄める（消えないように下限あり）
-                            const alpha = bar.kind === BAR_KINDS.subtotal ? style.subtotalOpacity : 1;
-                            const baseOpacity = bar.dimmed ? dimmedOpacity(alpha) : alpha;
-                            return (
-                                <g
-                                    key={bar.key}
-                                    className={`wf-bar wf-bar-${bar.kind}`}
-                                    role="option"
-                                    aria-selected={isSelected(ids)}
-                                    aria-label={`${bar.fullLabel}: ${bar.labelText}${bar.rateText ? ` (${bar.rateText})` : ""}`}
-                                    tabIndex={0}
-                                    data-index={index}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        select(ids, e.ctrlKey || e.metaKey);
-                                    }}
-                                    onKeyDown={keyHandler(ids)}
-                                    onContextMenu={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        onContextMenu(ids[0] ?? null, e.clientX, e.clientY);
-                                    }}
-                                    onMouseEnter={(e) => onTooltipShow?.(bar, e.clientX, e.clientY)}
-                                    onMouseMove={(e) => onTooltipMove?.(bar, e.clientX, e.clientY)}
-                                    onMouseLeave={() => onTooltipHide?.()}
-                                >
-                                    {b.segments.map((s, i) => {
-                                        const picked = !selectionActive || segmentPicked(bar, s.segment);
-                                        const opacity = picked ? baseOpacity : dimmedOpacity(alpha);
-                                        // 比べる形の小計は、ふつうの増減と見分けられるように描き分ける（ハイコントラストでは点線の枠）
-                                        const paint = !hc && bar.kind === BAR_KINDS.subtotal ? subtotalPaint(style, s.segment.color) : null;
-                                        const hatchId = paint?.hatch ? `wf-hatch-${uid}-${index}-${i}` : null;
-                                        const fill = hc
-                                            ? bar.kind === BAR_KINDS.total
-                                                ? hc.foreground
-                                                : hc.background
-                                            : paint
-                                              ? hatchId
-                                                  ? `url(#${hatchId})`
-                                                  : paint.fill
-                                              : s.segment.color;
-                                        return (
-                                            <React.Fragment key={i}>
-                                                {hatchId && (
-                                                    <defs>
-                                                        <pattern
-                                                            id={hatchId}
-                                                            width={5}
-                                                            height={5}
-                                                            patternUnits="userSpaceOnUse"
-                                                            patternTransform="rotate(45)"
-                                                        >
-                                                            <rect width={5} height={5} fill={paint!.fill} />
-                                                            <line x1={0} y1={0} x2={0} y2={5} stroke={s.segment.color} strokeWidth={2.4} />
-                                                        </pattern>
-                                                    </defs>
-                                                )}
-                                                {barShape(s.rect, s.corner, {
-                                                    className: "wf-bar-rect",
-                                                    fill,
-                                                    fillOpacity: opacity,
-                                                    stroke: hc ? hc.foreground : (paint?.stroke ?? undefined),
-                                                    // 選んでいないときは枠も塗りと同じだけ薄める
-                                                    strokeOpacity: paint?.stroke ? opacity : undefined,
-                                                    strokeWidth: hc ? 1.5 : paint?.stroke ? 1.5 : undefined,
-                                                    strokeDasharray: hc ? HC_DASH[bar.kind] : (paint?.dash ?? undefined),
-                                                })}
-                                                {s.highlight &&
-                                                    barShape(s.highlight, s.highlightCorner, {
-                                                        className: "wf-bar-highlight",
-                                                        // 小計のハイライトも、小計と同じ見せ方で描く（枠だけ・斜線・点線の枠）
-                                                        fill: hc ? hc.foreground : paint ? fill : s.segment.color,
-                                                        fillOpacity: alpha < 1 ? alpha : undefined,
-                                                        stroke: paint?.stroke ?? undefined,
-                                                        strokeWidth: paint?.stroke ? 1.5 : undefined,
-                                                        strokeDasharray: paint?.dash ?? undefined,
-                                                        pointerEvents: "none",
+                        <g className="wf-bars" id={gridMasked ? `${gridMaskId}-bars` : undefined}>
+                            {layout.bars.map((b, index) => {
+                                const { bar } = b;
+                                const ids = bar.selectionIds;
+                                // 比べる形の小計は透かして描く。薄めるときも、透かした濃さから薄める（消えないように下限あり）
+                                const alpha = bar.kind === BAR_KINDS.subtotal ? style.subtotalOpacity : 1;
+                                const baseOpacity = bar.dimmed ? dimmedOpacity(alpha) : alpha;
+                                return (
+                                    <g
+                                        key={bar.key}
+                                        className={`wf-bar wf-bar-${bar.kind}`}
+                                        role="option"
+                                        aria-selected={isSelected(ids)}
+                                        aria-label={`${bar.fullLabel}: ${bar.labelText}${bar.rateText ? ` (${bar.rateText})` : ""}`}
+                                        tabIndex={0}
+                                        data-index={index}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            select(ids, e.ctrlKey || e.metaKey);
+                                        }}
+                                        onKeyDown={keyHandler(ids)}
+                                        onContextMenu={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            onContextMenu(ids[0] ?? null, e.clientX, e.clientY);
+                                        }}
+                                        onMouseEnter={(e) => onTooltipShow?.(bar, e.clientX, e.clientY)}
+                                        onMouseMove={(e) => onTooltipMove?.(bar, e.clientX, e.clientY)}
+                                        onMouseLeave={() => onTooltipHide?.()}
+                                    >
+                                        {b.segments.map((s, i) => {
+                                            const picked = !selectionActive || segmentPicked(bar, s.segment);
+                                            const opacity = picked ? baseOpacity : dimmedOpacity(alpha);
+                                            // 比べる形の小計は、ふつうの増減と見分けられるように描き分ける（ハイコントラストでは点線の枠）
+                                            const paint = !hc && bar.kind === BAR_KINDS.subtotal ? subtotalPaint(style, s.segment.color) : null;
+                                            const hatchId = paint?.hatch ? `wf-hatch-${uid}-${index}-${i}` : null;
+                                            const fill = hc
+                                                ? bar.kind === BAR_KINDS.total
+                                                    ? hc.foreground
+                                                    : hc.background
+                                                : paint
+                                                  ? hatchId
+                                                      ? `url(#${hatchId})`
+                                                      : paint.fill
+                                                  : s.segment.color;
+                                            return (
+                                                <React.Fragment key={i}>
+                                                    {hatchId && (
+                                                        <defs>
+                                                            <pattern
+                                                                id={hatchId}
+                                                                width={5}
+                                                                height={5}
+                                                                patternUnits="userSpaceOnUse"
+                                                                patternTransform="rotate(45)"
+                                                            >
+                                                                <rect width={5} height={5} fill={paint!.fill} />
+                                                                <line x1={0} y1={0} x2={0} y2={5} stroke={s.segment.color} strokeWidth={2.4} />
+                                                            </pattern>
+                                                        </defs>
+                                                    )}
+                                                    {barShape(s.rect, s.corner, {
+                                                        className: "wf-bar-rect",
+                                                        fill,
+                                                        fillOpacity: opacity,
+                                                        stroke: hc ? hc.foreground : (paint?.stroke ?? undefined),
+                                                        // 選んでいないときは枠も塗りと同じだけ薄める
+                                                        strokeOpacity: paint?.stroke ? opacity : undefined,
+                                                        strokeWidth: hc ? 1.5 : paint?.stroke ? 1.5 : undefined,
+                                                        strokeDasharray: hc ? HC_DASH[bar.kind] : (paint?.dash ?? undefined),
                                                     })}
-                                            </React.Fragment>
-                                        );
-                                    })}
-                                    <rect
-                                        className="wf-focus"
-                                        x={b.rect.x - 2}
-                                        y={b.rect.y - 2}
-                                        width={b.rect.width + 4}
-                                        height={b.rect.height + 4}
-                                        fill="none"
-                                        stroke={hc ? hc.selected : style.valueAxis.font.color}
-                                        strokeWidth={2}
-                                        pointerEvents="none"
-                                    />
-                                </g>
-                            );
-                        })}
+                                                    {s.highlight &&
+                                                        barShape(s.highlight, s.highlightCorner, {
+                                                            className: "wf-bar-highlight",
+                                                            // 小計のハイライトも、小計と同じ見せ方で描く（枠だけ・斜線・点線の枠）
+                                                            fill: hc ? hc.foreground : paint ? fill : s.segment.color,
+                                                            fillOpacity: alpha < 1 ? alpha : undefined,
+                                                            stroke: paint?.stroke ?? undefined,
+                                                            strokeWidth: paint?.stroke ? 1.5 : undefined,
+                                                            strokeDasharray: paint?.dash ?? undefined,
+                                                            pointerEvents: "none",
+                                                        })}
+                                                </React.Fragment>
+                                            );
+                                        })}
+                                        <rect
+                                            className="wf-focus"
+                                            x={b.rect.x - 2}
+                                            y={b.rect.y - 2}
+                                            width={b.rect.width + 4}
+                                            height={b.rect.height + 4}
+                                            fill="none"
+                                            stroke={hc ? hc.selected : style.valueAxis.font.color}
+                                            strokeWidth={2}
+                                            pointerEvents="none"
+                                        />
+                                    </g>
+                                );
+                            })}
+                        </g>
 
                         {/* 接続線は棒の上に描く（標準と同じ）。線は棒の端に乗るので、棒の後ろに描くと半分が隠れて細く見えた（1.11.8.0 まで） */}
                         {style.connectors.show &&
