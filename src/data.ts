@@ -18,6 +18,7 @@ import { ROW_LIMIT, SERIES_LIMIT } from "./shared/warnings";
 
 import { mergeOrders } from "./order";
 import { BLANK_TEXT } from "./shared/tooltip";
+import { formatOfColumn, isBlankValue, nameTextOf, numberOf, valueTextOf } from "./shared/dataValue";
 
 import DataView = powerbi.DataView;
 import DataViewCategoryColumn = powerbi.DataViewCategoryColumn;
@@ -52,6 +53,11 @@ export interface ParsedSource {
     format: Formatter;
     /** イベントの列のとき、そのイベントの行を選ぶ ID。メジャーのイベントは空 */
     selectionIds: ISelectionId[];
+    /**
+     * イベントの列のとき、1.15.8 までの名前（列の書式をそのまま当てた字。日付に日付でない書式が来たときなどに今の名前と違う）。
+     * その版で保存した左端・右端を読むため。メジャーのイベントは無し（名前は変わっていない）
+     */
+    legacyName?: string;
 }
 
 /** 項目。同じ小計の区切り・同じ階層の行をまとめたもの */
@@ -79,6 +85,8 @@ export interface ParsedSection {
 export interface ItemMeasure {
     name: string;
     format: Formatter;
+    /** 列の書式の文字（型の既定を含む）。自前で書く数の桁区切りをこの書式で決める */
+    formatString: string;
     /** 項目の並びでの値。行が複数なら最初の行 */
     perItem: Array<number | null>;
     /** 同じくハイライト */
@@ -118,23 +126,11 @@ export interface Parsed {
 }
 
 export function formatterOf(column: DataViewMetadataColumn | undefined): Formatter {
-    const formatter = valueFormatter.create({
-        format: column ? valueFormatter.getFormatStringByColumn(column) : undefined,
-    });
-    return (value) => (value === null ? BLANK_TEXT : formatter.format(value));
+    return valueTextOf(formatOfColumn(column));
 }
 
-/** 数値に直す。空白・数値でないものは null（0 とは区別する） */
-export function toNumber(raw: PrimitiveValue | undefined): number | null {
-    if (raw === null || raw === undefined || raw === "") return null;
-    const n = typeof raw === "number" ? raw : Number(raw);
-    return Number.isFinite(n) ? n : null;
-}
-
-function categoryText(raw: PrimitiveValue | undefined, formatter: valueFormatter.IValueFormatter): string {
-    if (raw === null || raw === undefined || raw === "") return BLANK_TEXT;
-    return formatter.format(raw);
-}
+/** 数値に直す。空白・数値でないもの・NaN・±Infinity は null（0 とは区別する） */
+export const toNumber = (raw: PrimitiveValue | undefined): number | null => numberOf(raw);
 
 /** 系列ごとに届いた値を 1 つにする。どれも同じなら 1 つ（系列に左右されないメジャー）、違えば足す */
 export function collapseAcrossSeries(values: Array<number | null>): number | null {
@@ -195,25 +191,18 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         );
     }
 
-    const seriesFormatter = seriesColumn
-        ? valueFormatter.create({ format: valueFormatter.getFormatStringByColumn(seriesColumn) })
-        : null;
+    // 名前（凡例・階層・小計の列・イベント）は NaN・±Infinity を空白にせず字で出す（空白の項目とまとめない）
+    const seriesText = seriesColumn ? nameTextOf(formatOfColumn(seriesColumn)) : null;
     const series: ParsedSeries[] = groups.map((group) => ({
-        name: seriesFormatter ? categoryText(group.name, seriesFormatter) : "",
+        name: seriesText ? seriesText(group.name) : "",
         group,
         selectionId: seriesColumn ? host.createSelectionIdBuilder().withSeries(valueColumns, group).createSelectionId() : null,
     }));
 
     const rowCount = categories[0]?.values.length ?? valueColumnsOf[0][0].values.length;
-    const levelFormatters = hierarchyColumns.map((c) =>
-        valueFormatter.create({ format: valueFormatter.getFormatStringByColumn(c.source) })
-    );
-    const subtotalFormatter = subtotalColumn
-        ? valueFormatter.create({ format: valueFormatter.getFormatStringByColumn(subtotalColumn.source) })
-        : null;
-    const eventFormatter = eventColumn
-        ? valueFormatter.create({ format: valueFormatter.getFormatStringByColumn(eventColumn.source) })
-        : null;
+    const levelTexts = hierarchyColumns.map((c) => nameTextOf(formatOfColumn(c.source)));
+    const subtotalText = subtotalColumn ? nameTextOf(formatOfColumn(subtotalColumn.source)) : null;
+    const eventText = eventColumn ? nameTextOf(formatOfColumn(eventColumn.source)) : null;
 
     // --- 行を項目と小計の区切りにまとめる ---------------------------------------------
     // 名前のある区切りは、離れていても同じ名前ならまとめる（小計の列の値が同じ行をまとめる）。
@@ -226,11 +215,11 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
     let blankRun = 0;
     let previousBlank = false;
     for (let i = 0; i < rowCount; i++) {
-        const levels = hierarchyColumns.map((c, depth) => categoryText(c.values[i], levelFormatters[depth]));
+        const levels = hierarchyColumns.map((c, depth) => levelTexts[depth](c.values[i]));
         const rawSection = subtotalColumn?.values[i];
         const sectionName =
             subtotalColumn && rawSection !== null && rawSection !== undefined && String(rawSection).trim() !== ""
-                ? categoryText(rawSection, subtotalFormatter!)
+                ? subtotalText!(rawSection)
                 : null;
         if (sectionName === null && !previousBlank) blankRun++;
         previousBlank = sectionName === null;
@@ -250,7 +239,7 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         }
         item.rows.push(i);
         rowItem.push(item);
-        if (eventColumn) rowEventName.push(categoryText(eventColumn.values[i], eventFormatter!));
+        if (eventColumn) rowEventName.push(eventText!(eventColumn.values[i]));
     }
     const items = sections.flatMap((s) => s.items);
 
@@ -268,10 +257,17 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         const formatString = valueFormatter.getFormatStringByColumn(firstValueColumn.source) ?? "";
         const rowsOfEvent = names.map((): number[] => []);
         rowEventName.forEach((name, row) => rowsOfEvent[indexOf.get(name)!].push(row));
+        const legacyFormatter = valueFormatter.create({ format: formatOfColumn(eventColumn.source) });
+        const legacyNameOf = (row: number | undefined): string | undefined => {
+            if (row === undefined) return undefined;
+            const raw = eventColumn.values[row];
+            return raw === null || raw === undefined || raw === "" ? BLANK_TEXT : legacyFormatter.format(raw);
+        };
         sources = names.map((name, k) => ({
             name,
             format,
             formatString,
+            legacyName: legacyNameOf(rowsOfEvent[k][0]),
             selectionIds: dedupe(
                 rowsOfEvent[k].map((row) => host.createSelectionIdBuilder().withCategory(eventColumn, row).createSelectionId())
             ),
@@ -327,6 +323,7 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
         return {
             name: columns[0].source.displayName,
             format: formatterOf(columns[0].source),
+            formatString: valueFormatter.getFormatStringByColumn(columns[0].source) ?? "",
             perItem: items.map((item) => firstOf(item, (c) => c.values)),
             perItemHighlight: items.map((item) => firstOf(item, (c) => c.highlights)),
         };
@@ -335,13 +332,11 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
     // --- ツールヒントに足すフィールド ----------------------------------------------------
     const tooltipColumns = groups.map((g) => roleOf(g, "tooltips"));
     const tooltipCount = tooltipColumns[0]?.length ?? 0;
-    const tooltipFormatters = (tooltipColumns[0] ?? []).map((c) =>
-        valueFormatter.create({ format: valueFormatter.getFormatStringByColumn(c.source) })
-    );
+    const tooltipTexts = (tooltipColumns[0] ?? []).map((c) => valueTextOf(formatOfColumn(c.source)));
     const tooltipItemsOf = (rows: number[]) =>
         Array.from({ length: tooltipCount }, (_, t) => {
             const perRow = rows.map((row) => {
-                const raws = tooltipColumns.map((cols) => cols[t]?.values[row]).filter((v) => v !== null && v !== undefined && v !== "");
+                const raws = tooltipColumns.map((cols) => cols[t]?.values[row]).filter((v) => !isBlankValue(v));
                 if (!raws.length) return null;
                 if (raws.every((v) => typeof v === "number")) return collapseAcrossSeries(raws as number[]);
                 return raws[0];
@@ -350,8 +345,8 @@ export function parse(dataView: DataView | undefined, host: IVisualHost, landing
             let value: string;
             if (!present.length) value = BLANK_TEXT;
             else if (present.length > 1 && present.every((v) => typeof v === "number"))
-                value = tooltipFormatters[t].format((present as number[]).reduce((sum, v) => sum + v, 0));
-            else value = tooltipFormatters[t].format(present[0]);
+                value = tooltipTexts[t]((present as number[]).reduce((sum, v) => sum + v, 0));
+            else value = tooltipTexts[t](present[0]);
             return { displayName: tooltipColumns[0][t].source.displayName, value };
         });
 

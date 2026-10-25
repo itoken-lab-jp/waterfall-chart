@@ -10,12 +10,16 @@ import { createRoot, Root } from "react-dom/client";
 import { FormattingSettingsService } from "powerbi-visuals-utils-formattingmodel";
 import { displayWarnings } from "./shared/warnings";
 import { sentimentTextColors, showThemeToneColors } from "./shared/numberFormat";
+import { syncToneColors } from "./shared/formatCards";
+import { numberContainerItems } from "./shared/formatting";
 
 import "./../style/visual.less";
 import { App } from "./App";
 import { hasBrowserMenu } from "./shared/copyImage";
 import { VisualFormattingSettingsModel } from "./settings";
 import { showTooltipAt } from "./shared/tooltip";
+import { GuardedRenderer } from "./shared/renderGuard";
+import { contextMenuIdOf } from "./shared/contextMenu";
 import { SERIES_TRUNCATED_NOTICE, SERIES_TRUNCATED_TITLE, TRUNCATED_NOTICE, TRUNCATED_TITLE, TooltipTarget, transform, ViewModel } from "./viewModel";
 
 import VisualConstructorOptions = powerbi.extensibility.visual.VisualConstructorOptions;
@@ -29,6 +33,8 @@ import ISelectionId = powerbi.visuals.ISelectionId;
 
 export class Visual implements IVisual {
     private root: Root;
+    /** 描画の守り。update では描き終えてからレンダリング イベントを送り、失敗したら前の絵を消して知らせを出す */
+    private renderer: GuardedRenderer;
     private element: HTMLElement;
     private host: IVisualHost;
     private events: IVisualEventService;
@@ -49,6 +55,7 @@ export class Visual implements IVisual {
         this.tooltipService = options.host.tooltipService;
         this.formattingSettingsService = new FormattingSettingsService();
         this.root = createRoot(options.element);
+        this.renderer = new GuardedRenderer(this.root);
 
         // ブックマークの適用などで、選択が外から変わったとき
         this.selectionManager.registerOnSelectCallback((ids: ISelectionId[]) => {
@@ -58,10 +65,8 @@ export class Visual implements IVisual {
     }
 
     public update(options: VisualUpdateOptions): void {
-        // レンダリングイベントは認定要件。必ず started / finished(failed) を対で呼ぶ。
-        this.events.renderingStarted(options);
-
-        try {
+        // レンダリングイベントは認定要件。started と、描き終えてから finished（失敗なら failed）を対で 1 回ずつ送る
+        const rendered = this.renderer.update(this.events, options, () => {
             const dataView = options.dataViews?.[0];
             this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(
                 VisualFormattingSettingsModel,
@@ -84,7 +89,7 @@ export class Visual implements IVisual {
             const allowInteractions = this.host.hostCapabilities?.allowInteractions !== false;
 
             const render = () =>
-                this.root.render(
+                this.renderer.paint(
                     React.createElement(App, {
                         viewModel,
                         viewport: options.viewport,
@@ -93,19 +98,22 @@ export class Visual implements IVisual {
                             if (!allowInteractions) return;
                             this.selectionManager.select(ids, multiSelect).then((selected) => {
                                 this.selectedIds = selected as ISelectionId[];
-                                render();
+                                // 選択が返るまでに次の update が来ていれば、そのときの最新の内容で描く（失敗していれば描かない）
+                                this.renderLatest?.();
                             });
                         },
                         onClearSelection: () => {
                             if (!allowInteractions || this.selectedIds.length === 0) return;
                             this.selectionManager.clear().then(() => {
                                 this.selectedIds = [];
-                                render();
+                                // 選択が返るまでに次の update が来ていれば、そのときの最新の内容で描く（失敗していれば描かない）
+                                this.renderLatest?.();
                             });
                         },
-                        onContextMenu: (id, x, y) => {
+                        onContextMenu: (ids, x, y) => {
                             if (!allowInteractions) return;
-                            this.selectionManager.showContextMenu(id ?? ({} as ISelectionId), { x, y });
+                            // 1 行の棒はその行、まとめた棒と背景はビジュアルのメニュー
+                            this.selectionManager.showContextMenu(contextMenuIdOf(ids), { x, y });
                         },
                         onTooltipShow: (bar, x, y) => this.showTooltip(bar, x, y, false),
                         onTooltipMove: (bar, x, y) => this.showTooltip(bar, x, y, true),
@@ -118,12 +126,9 @@ export class Visual implements IVisual {
                 );
             this.renderLatest = render;
             render();
-
-            this.events.renderingFinished(options);
-        } catch (error) {
-            console.error("update failed", error);
-            this.events.renderingFailed(options, String(error));
-        }
+        });
+        // 描けなかったら、選択が外から変わっても前の内容で描き直さない（消した前の絵が戻る）
+        if (!rendered) this.renderLatest = null;
     }
 
     /** ツールヒント。中身は viewModel が組んだもの。棒は selectionId を渡す（ドリルスルーが対象の行を知るため）。目標の線は名前と値だけ */
@@ -134,7 +139,10 @@ export class Visual implements IVisual {
     /** 書式設定ペインを開くたび / 値変更のたびに呼ばれる */
     public getFormattingModel(): powerbi.visuals.FormattingModel {
         this.formattingSettings.constantLine.syncVisibility();
-        return this.formattingSettingsService.buildFormattingModel(this.formattingSettings);
+        // 使わない符号の色は出さない（触っても何も起きない）
+        syncToneColors(this.formattingSettings.dataLabels);
+        // 凡例の色の「設定の適用先」の項目は、同じ名前の系列でも uid が重ならないよう番号で振り直す
+        return numberContainerItems(this.formattingSettingsService.buildFormattingModel(this.formattingSettings));
     }
 
     public destroy(): void {

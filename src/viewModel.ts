@@ -47,9 +47,11 @@ import {
     VisualFormattingSettingsModel,
     dropdownValue,
 } from "./settings";
+import { legendRowsOf } from "./shared/legend";
 import { Formatter, LEVEL_SEPARATOR, ParsedItem, Parsed, parse } from "./data";
 import { formatValue, resolveUnit, unitBadgeOf } from "./unitUtils";
-import { ticksUpTo, tickCountOf, boundOf } from "./shared/ticks";
+import { ticksUpTo, tickCountOf, boundOf, niceDomain } from "./shared/ticks";
+import { numberFormatOf, savedChoiceIndex } from "./shared/dataValue";
 import { gridDashOf, lineCapOf, lineStrokeOf, CUSTOM_LINE_STYLE } from "./shared/gridlines";
 import { SCROLL_STARTS } from "./shared/scrollStart";
 import { HighContrastColors, highContrastOf } from "./shared/highContrast";
@@ -57,7 +59,8 @@ import { clampFontSize } from "./shared/textStyle";
 import { DRILL_PATH_SEPARATOR, SERIES_TRUNCATED_TITLE, SERIES_TRUNCATED_NOTICE } from "./shared/warnings";
 import { blend } from "./shared/color";
 import { Halo, haloOf, NO_HALO } from "./shared/halo";
-import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, sentimentTextColors, ownToneColor, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR, isPercentFormat, percentDigitsOf, formatPercent } from "./shared/numberFormat";
+import { formatSigned, shownSignOf, toneOf, NEGATIVE_STYLES, SignStyle, ZERO_STYLES, TONE_MODES, sentimentTextColors, ownToneColor, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR, formatPercent, sameRateOf, sameSectionSignOf, withSectionSign, formatSectionTick, SIGN_STYLE_DEFAULTS, someGroupingOf, groupingOf } from "./shared/numberFormat";
+import { maxOf, minOf } from "./shared/minMax";
 
 export { tickCountOf, gridDashOf, blend, boundOf };
 
@@ -163,6 +166,15 @@ export interface AxisInfo {
     cut: "none" | "bottom" | "top";
     /** 目盛りの本数を決め直す（範囲は変えない）。標準と同じく、描く範囲の長さで本数の上限を決めるために、長さが決まった後で呼ぶ */
     ticksFor?: (count: number) => Tick[];
+    /** 最小値・最大値を自動で決めたか（書式の最小値・最大値が空）。自動の端だけ、棒の外のラベルの分を延ばしてよい（layout） */
+    autoEnds: { min: boolean; max: boolean };
+    /**
+     * 同じ値から、範囲を丸める目盛りの本数の目安 count で組み直した軸（丸めないとき・端を決めたときは同じ範囲）。標準と同じく、
+     * 描く範囲の長さで決まる本数（目盛りと同じ本数）で丸めるために、長さが決まった後で呼ぶ（layout）
+     */
+    roundedWith?: (count: number) => AxisInfo;
+    /** 範囲を丸めた目盛りの本数の目安（丸めるときだけ）。丸め直しが落ち着かないときは、目盛りもこの本数で引く（layout の layoutRounded） */
+    roundCount?: number;
 }
 
 export interface LegendItem {
@@ -253,10 +265,22 @@ export interface ViewStyle {
         scrollStart: string;
         title: AxisTitle | null;
     };
-    /** tickCount：目盛りの本数の目安。0 なら自動（描く範囲の長さで決める） */
-    valueAxis: { show: boolean; font: TextStyle; switchPosition: boolean; invert: boolean; title: AxisTitle | null; tickCount: number };
+    valueAxis: {
+        show: boolean;
+        font: TextStyle;
+        switchPosition: boolean;
+        invert: boolean;
+        title: AxisTitle | null;
+        /** 目盛りの本数の目安。0 なら自動（描く範囲の長さで決める） */
+        tickCount: number;
+        /** 単位ラベルの位置（目盛りの列の端か、描く範囲の右上） */
+        unitPosition: "valueAxisTop" | "plotTopRight";
+        /** 単位ラベルの文字 */
+        unitFont: TextStyle;
+    };
     gridlines: { show: boolean; color: string; opacity: number; width: number; dash: string | null; cap?: "round" | "square" | "butt" };
-    legend: { show: boolean; position: LegendPosition; font: TextStyle; title: string };
+    /** rows は上下に置いたときに並べる行の数（1 か 2。左右に置いたときは効かない） */
+    legend: { show: boolean; position: LegendPosition; rows: number; font: TextStyle; title: string };
     /** cornerRadius：棒の角丸（px）。0 なら丸めない */
     columns: { categorySpacing: number; outerPadding: number | null; cornerRadius: number };
     /** 小計（比べる形）の見せ方。透かすときの濃さは subtotalOpacity */
@@ -273,6 +297,8 @@ export interface ViewModel {
     isEmpty: boolean;
     /** 描けないときに画面に出す文。isEmpty のときだけ使う */
     message: string;
+    /** 値のフィールドは入っているのに行が 0 件（絞り込みで何も残らない）。案内も出さずに何も描かない */
+    noData: boolean;
     /** 描けるが、知らせたいこと（行が落ちたなど）。無ければ空 */
     notice: string;
     shape: Shape | null;
@@ -354,7 +380,7 @@ const DEFAULT_SUBTOTAL_TRANSPARENCY = 50;
 function fontOf(control: formattingSettings.FontControl, color: string): TextStyle {
     return {
         family: control.fontFamily.value || DEFAULT_FONT_FAMILY,
-        // 書式ペインの範囲（8〜32pt）に丸める
+        // 書式ペインの範囲（8〜60pt）に丸める
         size: clampFontSize(Number(control.fontSize.value) || 9, 9),
         bold: !!control.bold?.value,
         italic: !!control.italic?.value,
@@ -381,6 +407,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
     const subtotalStyle: SubtotalStyle = (Object.values(SUBTOTAL_STYLES) as string[]).includes(subtotalValue)
         ? (subtotalValue as SubtotalStyle)
         : SUBTOTAL_STYLES.outline;
+    const valueFont = fontOf(settings.valueAxis.font, ink(colorOf(settings.valueAxis.labelColor) || "#605E5C"));
     return {
         orientation:
             dropdownValue(settings.layout.orientation, ORIENTATIONS.vertical) === ORIENTATIONS.horizontal
@@ -396,7 +423,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
             ...strokeOf(dropdownValue(settings.connectors.lineStyle, LINE_STYLES.solid), connectorWidth),
         },
         dataLabels: {
-            show: labels.show.value ?? true,
+            show: labels.show.value ?? false,
             // 空は自動のまま渡す（描画で棒の中か外かで決める）。ハイコントラストは前景色
             font: fontOf(labels.font, hc ? hc.foreground : colorOf(labels.color)),
             totalFont: fontOf(labels.totalFont, hc ? hc.foreground : colorOf(labels.totalColor) || colorOf(labels.color)),
@@ -421,17 +448,24 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
                 ink(colorOf(settings.categoryAxis.totalColor) || colorOf(settings.categoryAxis.labelColor) || "#605E5C")
             ),
             maxShare: clamp(Number(settings.categoryAxis.maxHeight.value) || 25, 5, 100) / 100,
-            minCategoryWidth: Math.max(0, Number(settings.categoryAxis.minCategoryWidth.value) || 0),
+            minCategoryWidth: clamp(Number(settings.categoryAxis.minCategoryWidth.value) || 0, 0, 500),
             scrollStart: dropdownValue(settings.categoryAxis.scrollStart, SCROLL_STARTS.start),
             title: null,
         },
         valueAxis: {
             show: settings.valueAxis.show.value ?? true,
-            font: fontOf(settings.valueAxis.font, ink(colorOf(settings.valueAxis.labelColor) || "#605E5C")),
+            font: valueFont,
             switchPosition: settings.valueAxis.switchPosition.value ?? false,
             invert: settings.valueAxis.invertRange.value ?? false,
             title: null,
             tickCount: tickCountOf(settings.valueAxis.tickCount.value),
+            unitPosition: dropdownValue(settings.valueAxis.unitPosition, "valueAxisTop") === "plotTopRight" ? "plotTopRight" : "valueAxisTop",
+            // 文字サイズ・カラーが空なら値（目盛り）と同じ（1.15 までは目盛りの文字のまま描いていた）
+            unitFont: {
+                ...valueFont,
+                size: settings.valueAxis.unitFontSize.value == null ? valueFont.size : clampFontSize(Number(settings.valueAxis.unitFontSize.value), valueFont.size),
+                color: ink(colorOf(settings.valueAxis.unitColor) || valueFont.color),
+            },
         },
         gridlines: {
             show: settings.gridlines.horizontalShow.value ?? true,
@@ -446,6 +480,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
         legend: {
             show: settings.legend.show.value ?? true,
             position: legendPlacementValue(settings.legend.position.value?.value),
+            rows: legendRowsOf(settings.legend.rows.value?.value),
             font: fontOf(settings.legend.font, ink(colorOf(settings.legend.labelColor) || "#605E5C")),
             title: "",
         },
@@ -474,19 +509,21 @@ const NO_FORMAT: DataDrivenFormat = {
     seriesTargets: [],
     horizontal: false,
     subtotalDiff: false,
+    hasStart: false,
 };
 
-function emptyOf(style: ViewStyle, message: string): ViewModel {
+function emptyOf(style: ViewStyle, message: string, noData = false, placed: Pick<DataDrivenFormat, "hasOrigin" | "hasTarget"> = NO_FORMAT): ViewModel {
     return {
         isEmpty: true,
         message,
+        noData,
         notice: "",
         shape: null,
         bars: [],
         events: [],
         leftEvent: "",
         rightEvent: "",
-        axis: { min: 0, max: 1, ticks: [], cut: "none" },
+        axis: { min: 0, max: 1, ticks: [], cut: "none", autoEnds: { min: true, max: true } },
         unitBadge: "",
         drillPath: "",
         copyButton: false,
@@ -496,7 +533,7 @@ function emptyOf(style: ViewStyle, message: string): ViewModel {
         hasHighlights: false,
         truncated: false,
         seriesTruncated: false,
-        format: { ...NO_FORMAT, horizontal: style.orientation === ORIENTATIONS.horizontal },
+        format: { ...NO_FORMAT, hasOrigin: placed.hasOrigin, hasTarget: placed.hasTarget, horizontal: style.orientation === ORIENTATIONS.horizontal },
         style,
     };
 }
@@ -578,7 +615,7 @@ function splitOthers<T extends { delta: number }>(entries: T[], keep: number): {
 /** 棒の区画が描く範囲（系列で積むと、正と負の区画で上下に広がる） */
 export function extentOf(bar: Bar): [number, number] {
     const ends = bar.segments.flatMap((s) => [s.from, s.to]);
-    return ends.length ? [Math.min(...ends), Math.max(...ends)] : [Math.min(bar.from, bar.to), Math.max(bar.from, bar.to)];
+    return ends.length ? [minOf(ends), maxOf(ends)] : [Math.min(bar.from, bar.to), Math.max(bar.from, bar.to)];
 }
 
 export interface AxisOptions {
@@ -595,7 +632,8 @@ export interface AxisOptions {
  * 軸の範囲。0 から描かないときは、増減が見やすいように合計の棒を切る。
  * 累計が 0 をまたぐときや、形 2 のように 0 から積むときは 0 が範囲に入るので切らない。
  * 書式の最小値・最大値は、切る・0 から描くより優先する（入れた値のまま。丸めない）。
- * 最小値が 0 より大きい（最大値が 0 より小さい）と、合計の棒の根元が軸の外になるので「切った」ことになる
+ * 最小値が 0 より大きい（最大値が 0 より小さい）と、合計の棒の根元が軸の外になるので「切った」ことになる。
+ * 丸めるときは、目盛りの本数の目安 TICK_COUNT で丸めておき、描く範囲の長さが決まったら、その長さで決まる本数で丸め直す（roundedWith）
  */
 export function axisOf(bars: Bar[], options: AxisOptions, formatTick: (v: number) => string, extra: number[] = []): AxisInfo {
     const { startAtZero, start, end, round } = options;
@@ -605,8 +643,8 @@ export function axisOf(bars: Bar[], options: AxisOptions, formatTick: (v: number
         else points.push(...extentOf(bar));
     }
     if ((startAtZero && start === null) || !points.length) points.push(0);
-    const low = Math.min(...points);
-    const high = Math.max(...points);
+    const low = minOf(points);
+    const high = maxOf(points);
     let lo = low;
     let hi = high;
     if (!startAtZero) {
@@ -620,25 +658,32 @@ export function axisOf(bars: Bar[], options: AxisOptions, formatTick: (v: number
     if (start !== null) lo = start;
     if (end !== null) hi = end;
     if (lo >= hi) hi = lo + (Math.abs(lo) * 0.1 || 1);
-    let min = lo;
-    let max = hi;
-    if (round) {
-        const [niceMin, niceMax] = scaleLinear().domain([lo, hi]).nice(TICK_COUNT).domain();
-        if (start === null) min = niceMin;
-        if (end === null) max = niceMax;
-    }
-    const cut = min > 0 ? "bottom" : max < 0 ? "top" : "none";
-    return {
-        min,
-        max,
-        ticks: scaleLinear()
-            .domain([min, max])
-            .ticks(TICK_COUNT)
-            .map((value) => ({ value, label: formatTick(value) })),
-        ticksFor: (count: number) =>
-            ticksUpTo([min, max], count, (values) => values.map(formatTick)).map((value) => ({ value, label: formatTick(value) })),
-        cut,
+    const roundedWith = (count: number): AxisInfo => {
+        let min = lo;
+        let max = hi;
+        if (round) {
+            const [niceMin, niceMax] = niceDomain(lo, hi, count);
+            if (start === null) min = niceMin;
+            if (end === null) max = niceMax;
+        }
+        // 切ったかは丸めた範囲で決める（丸めて 0 に届けば切らない）
+        const cut = min > 0 ? "bottom" : max < 0 ? "top" : "none";
+        return {
+            min,
+            max,
+            ticks: scaleLinear()
+                .domain([min, max])
+                .ticks(TICK_COUNT)
+                .map((value) => ({ value, label: formatTick(value) })),
+            ticksFor: (ticks: number) =>
+                ticksUpTo([min, max], ticks, (values) => values.map(formatTick)).map((value) => ({ value, label: formatTick(value) })),
+            cut,
+            autoEnds: { min: start === null, max: end === null },
+            roundedWith,
+            ...(round ? { roundCount: count } : {}),
+        };
     };
+    return roundedWith(TICK_COUNT);
 }
 
 /** 系列 1 つぶんの増減。値の枠 before → after（形 2・3 は before が null） */
@@ -647,6 +692,13 @@ interface Part {
     delta: number;
     /** ハイライトの該当分の増減。該当しなければ null */
     highlight: number | null;
+}
+
+/** 届いた行の数。カテゴリが無ければ値の列の長さ */
+function rowCountOf(dataView: DataView | undefined): number {
+    const categorical = dataView?.categorical;
+    if (categorical?.categories?.length) return categorical.categories[0].values?.length ?? 0;
+    return Math.max(0, maxOf((categorical?.values ?? []).map((column) => column.values?.length ?? 0)));
 }
 
 const sumOf = (values: Array<number | null>): number | null =>
@@ -658,10 +710,22 @@ export function transform(
     settings: VisualFormattingSettingsModel
 ): ViewModel {
     const style = styleOf(settings, host);
+    // 値のフィールドは入っているのに行が無い（絞り込みで 0 件など）なら、作り手向けの案内は出さずに何も描かない。
+    // 比較の列・起点の有無によらない（比較の列の値の枠は行に出たイベントから作るので、0 件ではどの形も描けない）
+    const placedColumns = dataView?.metadata?.columns ?? [];
+    const valuePlaced = placedColumns.some((column) => column.roles?.value);
+    // 0 件でも、起点・目標の役割にフィールドが入っていれば書式ペインの「起点の扱い」と目標のカードは出したままにする
+    const placed = {
+        hasOrigin: placedColumns.some((column) => column.roles?.origin),
+        hasTarget: placedColumns.some((column) => column.roles?.target),
+    };
+    if (valuePlaced && rowCountOf(dataView) === 0) return emptyOf(style, "", true, placed);
     const parsed: Parsed = parse(dataView, host, LANDING_MESSAGE);
     if (parsed.error) return emptyOf(style, parsed.error);
 
     const { sources, series, items, sections, hasSeries, hasHighlights } = parsed;
+    // 値の枠が 1 つも無ければ（列の情報が欠けて上で 0 件と見分けられなかったときも）、0 件と同じく何も描かない
+    if (!sources.length) return emptyOf(style, "", true, placed);
     const origin = parsed.origin;
     const shape: Shape = sources.length >= 2 ? SHAPES.compare : origin ? SHAPES.origin : SHAPES.merge;
     if (shape === SHAPES.compare && origin) {
@@ -674,10 +738,13 @@ export function transform(
     // --- 左端・右端のイベント（形 1） -------------------------------------------------
     const eventNames = shape === SHAPES.compare ? sources.map((s) => s.name) : [];
     const layoutObject = dataView?.metadata?.objects?.layout as DataViewObject | undefined;
-    // 保存値は populate の時点では選択肢に無く、スライスには入らない。生の objects から読む
+    // 保存値は populate の時点では選択肢に無く、スライスには入らない。生の objects から読む。
+    // イベント名が数字の形（年度・コード）だと、Desktop は数で保存して数で届ける（"0410" は 410 になる）ので、数でも探す
+    // 無ければ 1.15.8 までの名前（列の書式をそのまま当てた字）でも探す（その版で保存した値を読む）
+    const legacyEventNames = shape === SHAPES.compare ? sources.map((s) => s.legacyName ?? s.name) : [];
     const savedIndex = (property: "leftEvent" | "rightEvent"): number => {
-        const raw = layoutObject?.[property];
-        return typeof raw === "string" ? eventNames.indexOf(raw) : -1;
+        const index = savedChoiceIndex(layoutObject?.[property], eventNames);
+        return index >= 0 ? index : savedChoiceIndex(layoutObject?.[property], legacyEventNames);
     };
     const leftIndex = shape === SHAPES.compare && savedIndex("leftEvent") >= 0 ? savedIndex("leftEvent") : 0;
     const rightIndex =
@@ -825,7 +892,7 @@ export function transform(
     const commonDepth = (() => {
         const withLevels = items.filter((item) => item.levels.length > 1);
         if (!withLevels.length) return 0;
-        const maxDepth = Math.min(...withLevels.map((item) => item.levels.length - 1));
+        const maxDepth = minOf(withLevels.map((item) => item.levels.length - 1));
         let depth = 0;
         while (depth < maxDepth && withLevels.every((item) => item.levels[depth] === withLevels[0].levels[depth])) depth++;
         return depth;
@@ -1146,33 +1213,53 @@ export function transform(
         bars.filter(kind).reduce((m, bar) => Math.max(m, Math.abs(bar.value)), 0);
     const deltaMax = maxAbs((bar) => bar.kind !== BAR_KINDS.total);
     const unitBase = deltaMax || maxAbs((bar) => bar.kind === BAR_KINDS.total);
-    // 値の書式が %（構成比・率）なら、表示単位で割らず、単位ラベルも付けずに % で出す
-    const percentValue = parsed.sources.length > 0 && parsed.sources.every((source) => isPercentFormat(source.formatString));
-    const valuePercentDigits = percentDigitsOf(parsed.sources[0]?.formatString);
+    // 値の書式が %（構成比・率）なら、表示単位で割らず、単位ラベルも付けずに % で出す（‰ の書式なら 1000 倍して ‰）。
+    // 字で書いた %（0.0"%"。値がすでに % の数）は 100 倍せずに %（Power BI の書式と同じ）。名前の付いた Percent は 0.00% と読む
+    const valueRate = sameRateOf(parsed.sources.map((source) => numberFormatOf(source.formatString)));
+    // 値の書式の「正;負;0」の節（#,0;(#,0);-）。値のフィールドの節の書き方がすべて同じときだけ当てる（率と同じ考え方）
+    const valueSections = sameSectionSignOf(parsed.sources.map((source) => numberFormatOf(source.formatString)));
+    // 自前で書く数（目盛り・データ ラベル・目標・定数線）の桁区切り（1,000）は、標準と同じく値の書式に従う（#,0 なら付け、0・0.00・書式なしなら
+    // 付けない）。値のフィールドのどれかの書式に桁区切りがあれば付ける（率・節と同じ列で決める）
+    const valueGrouping = someGroupingOf(parsed.sources.map((source) => numberFormatOf(source.formatString)));
+    const percentValue = valueRate !== null;
+    const valuePercentDigits = valueRate?.digits ?? 0;
+    const valueScale = valueRate?.scale ?? 100;
     const unit = percentValue
         ? resolveUnit("0", 0, notation, axisPrecision)
         : resolveUnit(dropdownValue(axisSettings.unitType, "auto"), unitBase, notation, axisPrecision);
     // データ ラベルの表示単位。「Y 軸と同じ」でなければラベル自身の単位で出し、単位の語を付ける
     const labelUnitKey = dropdownValue(settings.dataLabels.unitType, "auto");
     const labelUnit = labelUnitKey === "auto" || percentValue ? null : resolveUnit(labelUnitKey, unitBase, notation, labelPrecision);
-    // マイナスと 0 の書き方（▲・±0 など）。合計には + を付けない
+    // マイナスと 0 の書き方（▲・±0 など）。合計には + を付けない。
+    // 「負の値の書き方」「0 の書き方」「+ を付ける」をレポートに保存していなければ、値の書式の節に従う（+ は正の節に + があれば付け、
+    // 無ければ書式ペインの既定のオン）。保存してあればペイン
+    const savedLabels = dataView?.metadata?.objects?.dataLabels;
     const signStyle: SignStyle = {
-        negative: dropdownValue(settings.dataLabels.negativeStyle, NEGATIVE_STYLES.minus),
-        zero: dropdownValue(settings.dataLabels.zeroStyle, ZERO_STYLES.zero),
-        negativeZero: settings.dataLabels.negativeZero.value ?? true,
-        plus: settings.dataLabels.plusSign.value ?? true,
+        ...SIGN_STYLE_DEFAULTS,
+        ...withSectionSign(
+            {
+                negative: dropdownValue(settings.dataLabels.negativeStyle, NEGATIVE_STYLES.minus),
+                zero: dropdownValue(settings.dataLabels.zeroStyle, ZERO_STYLES.zero),
+                negativeZero: settings.dataLabels.negativeZero.value ?? true,
+                plus: settings.dataLabels.plusSign.value ?? true,
+            },
+            valueSections,
+            savedLabels
+        ),
     };
-    // 目標の線・定数線の値にも使う（+ は付けない）
-    const labelOf = (v: number, plus = false, precision = labelPrecision) =>
+    // 目標の線・定数線の値にも使う（+ は付けない）。grouping は桁区切り（起点の棒と目標は、その列の書式。ツールヒントと同じ列）
+    const labelOf = (v: number, plus = false, precision = labelPrecision, grouping = valueGrouping) =>
         percentValue
-            ? formatPercent(v, precision, valuePercentDigits, { ...signStyle, plus })
+            ? formatPercent(v, precision, valuePercentDigits, { ...signStyle, plus }, valueRate!, grouping)
             : labelUnit
-            ? formatSigned(v, labelUnit.divisor, precision, { ...signStyle, plus }, labelUnit.unitWord)
-            : formatSigned(v, unit.divisor, precision, { ...signStyle, plus });
+            ? formatSigned(v, labelUnit.divisor, precision, { ...signStyle, plus }, labelUnit.unitWord, grouping)
+            : formatSigned(v, unit.divisor, precision, { ...signStyle, plus }, "", grouping);
+    /** 自分の列を持つ数（起点・目標）の桁区切り */
+    const ownGroupingOf = (measure: { formatString: string } | null | undefined) =>
+        measure ? groupingOf(numberFormatOf(measure.formatString)) : valueGrouping;
     // 増減・小計の値の文字を符号で塗る（見える符号で決める。▲0 はマイナス、±0 は塗らない）
     const toneMode = dropdownValue(settings.dataLabels.toneMode, TONE_MODES.none);
     // 書式ペインで決めていなければ、テーマの良い・悪いの色を字に使える濃さにして使う
-    const savedLabels = dataView?.metadata?.objects?.dataLabels;
     const themeTones = sentimentTextColors(host.colorPalette as ISandboxExtendedColorPalette);
     const toneColors = {
         good: ownToneColor(colorOf(settings.dataLabels.positiveColor), savedLabels?.positiveColor, DEFAULT_GOOD_COLOR) || themeTones.good,
@@ -1181,11 +1268,11 @@ export function transform(
     const labelDivisor = labelUnit ? labelUnit.divisor : unit.divisor;
     for (const bar of bars) {
         const delta = bar.kind !== BAR_KINDS.total;
-        bar.labelText = labelOf(bar.value, delta && signStyle.plus);
+        bar.labelText = labelOf(bar.value, delta && signStyle.plus, labelPrecision, bar.totalRole === "origin" ? ownGroupingOf(origin) : valueGrouping);
         const tone = delta
             ? toneOf(
                   percentValue
-                      ? shownSignOf(bar.value * 100, 1, labelPrecision === "auto" ? String(valuePercentDigits) : labelPrecision, signStyle)
+                      ? shownSignOf(bar.value * valueScale, 1, labelPrecision === "auto" ? String(valuePercentDigits) : labelPrecision, signStyle)
                       : shownSignOf(bar.value, labelDivisor, labelPrecision, signStyle),
                   1,
                   toneMode
@@ -1209,7 +1296,7 @@ export function transform(
             value,
             name: parsed.target.name,
             // 名前は凡例に出す。グラフの中の名前と値は既定で出さない（ユーザー決定。目標のラベルの位置に違和感があるため）
-            label: (settings.target.labelShow.value ?? false) ? `${parsed.target.name} ${labelOf(value)}` : "",
+            label: (settings.target.labelShow.value ?? false) ? `${parsed.target.name} ${labelOf(value, false, labelPrecision, ownGroupingOf(parsed.target))}` : "",
             tooltip: [{ displayName: parsed.target.name, value: parsed.target.format(value) }],
             color: ink(colorOf(settings.target.color) || "#252423"),
             width,
@@ -1254,14 +1341,27 @@ export function transform(
             end: boundOf(axisSettings.end.value),
             round: axisSettings.roundRange.value ?? true,
         },
-        // % の目盛りは、桁が自動なら値の大きさで決める（5% 以上なら整数。40% のように出す）
-        (v) => (percentValue ? formatPercent(v, axisPrecision, unitBase * 100 >= 5 ? 0 : 1) : formatValue(v, unit.divisor, axisPrecision)),
+        // % の目盛りは、桁が自動なら値の大きさで決める（5% 以上なら整数。40% のように出す）。
+        // 値の書式に「正;負;0」の節があれば、標準と同じく目盛りにも当てる（書式ペインの符号の書き方は使わない）
+        (v) => {
+            if (percentValue) {
+                const digits = axisPrecision === "auto" ? String(unitBase * valueScale >= 5 ? 0 : 1) : axisPrecision;
+                return valueSections
+                    ? formatSectionTick(v, formatValue(Math.abs(v) * valueRate!.scale, 1, digits, valueGrouping), valueSections, valueRate!.mark)
+                    : formatPercent(v, axisPrecision, unitBase * valueScale >= 5 ? 0 : 1, undefined, valueRate!, valueGrouping);
+            }
+            return valueSections
+                ? formatSectionTick(v, formatValue(Math.abs(v), unit.divisor, axisPrecision, valueGrouping), valueSections)
+                : formatValue(v, unit.divisor, axisPrecision, valueGrouping);
+        },
         target ? [target.value] : []
     );
 
     // --- 軸のタイトル -----------------------------------------------------------------------
     // 自動は、値の軸は値のフィールドの名前、項目の軸は見えているレベルの名前（ドリルした親のレベルは除く）
-    const unitLabel = percentValue ? "" : `${unit.unitWord}${(axisSettings.unitText.value ?? "").trim()}`;
+    // 表示単位を付けないときは、単位の追加文字だけ（上の単位のラベルも同じ）
+    const unitWord = (axisSettings.unitIncludeDisplayUnit.value ?? true) ? unit.unitWord : "";
+    const unitLabel = percentValue ? "" : `${unitWord}${(axisSettings.unitText.value ?? "").trim()}`;
     // 単位のみは括弧に入れる（上の単位のラベルと同じ書き方）。単位が無ければタイトルのまま
     const titleOf = (styleValue: string, text: string, unitText: string): string => {
         if (styleValue === TITLE_STYLES.showUnitOnly) return unitText ? `(${unitText})` : text;
@@ -1339,13 +1439,14 @@ export function transform(
               ]
             : []),
     ];
-    if (settings.legend.titleShow.value ?? false) {
+    if (settings.legend.titleShow.value ?? true) {
         style.legend.title = (settings.legend.titleText.value ?? "").trim() || parsed.seriesName;
     }
 
     return {
         isEmpty: false,
         message: "",
+        noData: false,
         notice: parsed.truncated ? TRUNCATED_NOTICE : "",
         shape,
         bars,
@@ -1354,7 +1455,9 @@ export function transform(
         rightEvent: eventNames[rightIndex] ?? "",
         axis,
         unitBadge:
-            (axisSettings.unitShow.value ?? true) && !unitInTitle && !percentValue ? unitBadgeOf(unit.unitWord, axisSettings.unitText.value ?? "") : "",
+            (axisSettings.unitShow.value ?? true) && dropdownValue(axisSettings.unitPosition, "valueAxisTop") !== "none" && !unitInTitle && !percentValue
+                ? unitBadgeOf(unitWord, axisSettings.unitText.value ?? "", dropdownValue(axisSettings.unitStyle, "parentheses"))
+                : "",
         drillPath: (settings.layout.drillPathShow.value ?? true) ? drillPath : "",
         copyButton: settings.layout.copyButton.value ?? true,
         legend,
@@ -1378,6 +1481,7 @@ export function transform(
                 : [],
             horizontal: style.orientation === ORIENTATIONS.horizontal,
             subtotalDiff: bars.some((b) => b.kind === BAR_KINDS.subtotal),
+            hasStart: startBar !== null,
         },
         style,
     };

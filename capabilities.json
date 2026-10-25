@@ -464,6 +464,12 @@
                         ]
                     }
                 },
+                "rows": {
+                    "displayName": "行数",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
                 "fontFamily": {
                     "displayName": "フォント",
                     "type": {
@@ -1007,7 +1013,7 @@
                     }
                 },
                 "scrollStart": {
-                    "displayName": "スクロールの最初の位置",
+                    "displayName": "初期スクロール位置",
                     "type": {
                         "enumeration": []
                     }
@@ -1386,6 +1392,42 @@
                     "displayName": "単位の追加文字",
                     "type": {
                         "text": true
+                    }
+                },
+                "unitPosition": {
+                    "displayName": "位置",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "unitStyle": {
+                    "displayName": "スタイル",
+                    "type": {
+                        "enumeration": []
+                    }
+                },
+                "unitIncludeDisplayUnit": {
+                    "displayName": "表示単位（百万など）を付ける",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "unitFontSize": {
+                    "displayName": "単位文字サイズ",
+                    "type": {
+                        "formatting": {
+                            "fontSize": true
+                        }
+                    }
+                },
+                "unitColor": {
+                    "displayName": "単位カラー",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
                     }
                 },
                 "gridlineShow": {

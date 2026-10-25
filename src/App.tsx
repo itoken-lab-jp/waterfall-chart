@@ -7,7 +7,7 @@
  * - 2 枚重ねる：下は棒・項目名・グリッド線など（項目が多いとスクロールする）、上は値の軸の目盛り・タイトル・凡例など
  *   （スクロールしない。凡例のほかはマウスを通す）
  * - 選択：棒・凡例の系列をクリック（Ctrl で追加）、背景で解除。右クリックでコンテキスト メニュー
- * - キーボード：Tab で棒と凡例の系列をたどり、Enter・Space で選ぶ、Esc で解除
+ * - キーボード：Tab で棒と凡例の系列をたどり、Enter・Space で選ぶ、Ctrl+Shift+C で解除（Esc は Power BI に任せる）
  * - ハイライト：該当しない棒を薄く描き、該当分を通常の濃さで重ねる
  * - ハイコントラスト：前景色と背景色だけで描き、増減は線の種類で見分ける
  */
@@ -23,13 +23,20 @@ import { LegendArrowButton } from "./shared/LegendArrowButton";
 import { controlColorsOf } from "./shared/controls";
 import { DARK_TEXT } from "./shared/color";
 import { CopyImageButton } from "./shared/CopyImageButton";
+import { chartImage } from "./shared/copyImage";
+import { grownSize, hiddenOf, wholeChartImage } from "./shared/wholeImage";
 import { haloStyle } from "./shared/halo";
 import { gridCutout, useGridMaskId } from "./shared/gridCutout";
+import { selectionLookup } from "./shared/selectionLookup";
+import { ListGroup } from "./listGeneration";
 
 import IViewport = powerbi.IViewport;
 import ISelectionId = powerbi.visuals.ISelectionId;
 
 export { layoutOf } from "./layout";
+
+/** 棒が多いときにスクロールする箱（縦向きは横に、横向きは縦に） */
+const SCROLLERS = ".wf-scroll-x, .wf-scroll-y";
 
 /** 選んでいない棒・ハイライトに該当しない分の濃さ */
 export const DIM_OPACITY = 0.35;
@@ -45,8 +52,8 @@ export interface AppProps {
     selectedIds: ISelectionId[];
     onSelect: (ids: ISelectionId[], multiSelect: boolean) => void;
     onClearSelection: () => void;
-    /** データの無い場所では id が null */
-    onContextMenu: (id: ISelectionId | null, x: number, y: number) => void;
+    /** 右クリック。ids は押した所が選ぶ行（棒は選ぶときと同じ行をすべて。背景は空）。どの ID でメニューを出すかは shared/contextMenu.ts */
+    onContextMenu: (ids: readonly ISelectionId[], x: number, y: number) => void;
     /** 棒か、目標の線（線のツールヒントは名前と値） */
     onTooltipShow?: (target: TooltipTarget, x: number, y: number) => void;
     onTooltipMove?: (target: TooltipTarget, x: number, y: number) => void;
@@ -124,20 +131,21 @@ function Text({ layout, className, opacity, title, hover }: { layout: TextLayout
 
 const lineProps = (l: Line) => ({ x1: l.x1, y1: l.y1, x2: l.x2, y2: l.y2 });
 
-export const App: React.FC<AppProps> = ({
-    viewModel,
-    viewport,
-    selectedIds,
-    onSelect,
-    onClearSelection,
-    onContextMenu,
-    onTooltipShow,
-    onTooltipMove,
-    onTooltipHide,
-    interactive = true,
-    editing = true,
-    browserMenu = false,
-}) => {
+export const App: React.FC<AppProps> = (props) => {
+    const {
+        viewModel,
+        viewport,
+        selectedIds,
+        onSelect,
+        onClearSelection,
+        onContextMenu,
+        onTooltipShow,
+        onTooltipMove,
+        onTooltipHide,
+        interactive = true,
+        editing = true,
+        browserMenu = false,
+    } = props;
     // 斜線の模様の id を、同じページのほかのウォーターフォールとぶつけない（SVG の id はページ全体で引かれる）
     const uid = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
     // はみ出したときの最初の位置。縦向きは横に、横向きは縦にスクロールする。末尾なら、棒の数・両端が変わったら当て直す
@@ -156,7 +164,7 @@ export const App: React.FC<AppProps> = ({
         onClick: () => onClearSelection(),
         onContextMenu: (e: React.MouseEvent) => {
             e.preventDefault();
-            onContextMenu(null, e.clientX, e.clientY);
+            onContextMenu([], e.clientX, e.clientY);
         },
     };
 
@@ -166,9 +174,18 @@ export const App: React.FC<AppProps> = ({
     const [legendPageState, setLegendPageState] = React.useState({ key: legendKey, page: 0 });
     const legendPage = legendPageState.key === legendKey ? legendPageState.page : 0;
     const setLegendPage = (page: number) => setLegendPageState({ key: legendKey, page });
+    // 目盛線を棒の形で切り抜く mask の ID（gridCutout）。フックは下の早い return より前で呼ぶ（状態でフックの数を変えない）
+    const gridMaskId = useGridMaskId("wf");
+    // 座標。layoutOf は範囲の丸め直しと名前の側の余白の取り直しで何度も組むので、選択が変わって描き直すとき（viewModel・大きさ・
+    // 凡例のページが同じ）は組み直さない
+    const layout: ChartLayout | null = React.useMemo(
+        () => (viewModel.isEmpty ? null : layoutOf(viewModel, viewport, legendPage)),
+        [viewModel, viewport, legendPage]
+    );
 
-    // フィールドを入れる前の案内は、編集中だけ出す（閲覧中は標準と同じく何も描かない）
-    if (viewModel.isEmpty && !editing) {
+    // フィールドを入れる前の案内は、編集中だけ出す（閲覧中は標準と同じく何も描かない）。
+    // 絞り込みで 0 件なら編集中も何も描かない。どちらも背景のクリック（選択を外す）と右クリック（Power BI のメニュー）は効かせる
+    if (viewModel.isEmpty && (viewModel.noData || !editing)) {
         return <div className="wf-container" style={{ width: viewport.width, height: viewport.height }} {...backgroundHandlers} />;
     }
     if (viewModel.isEmpty) {
@@ -179,7 +196,6 @@ export const App: React.FC<AppProps> = ({
         );
     }
 
-    const layout: ChartLayout | null = layoutOf(viewModel, viewport, legendPage);
     if (!layout) {
         return <div className="wf-container" style={{ width: viewport.width, height: viewport.height }} {...backgroundHandlers} />;
     }
@@ -189,7 +205,9 @@ export const App: React.FC<AppProps> = ({
     const { scroll } = layout;
     const region = scroll.region;
 
-    const isSelected = (ids: ISelectionId[]) => ids.some((id) => selectedIds.some((s) => s.equals(id)));
+    // 選んだ ID は行の数だけあることがある。棒ごとに選んだ ID を全部比べず、描くたびに 1 回作って引く
+    const inSelection = selectionLookup(selectedIds);
+    const isSelected = (ids: ISelectionId[]) => ids.some((id) => inSelection(id));
     const legendIdOf = (segment: Segment) => {
         if (segment.series === null) return null;
         return viewModel.legend.find((item, i) => item.kind === "series" && i === segment.series)?.selectionId ?? null;
@@ -202,14 +220,13 @@ export const App: React.FC<AppProps> = ({
     const selectionActive = !viewModel.hasHighlights && selectedIds.length > 0;
     // 小計を透かして描くときは、目盛線を棒の形で切り抜く（目盛線はいちばん後ろ。半透明の小計の下で透けて見えないように）。
     // mask は棒のまとまり（id が `${gridMaskId}-bars`）を写す
-    const gridMaskId = useGridMaskId("wf");
     const gridMasked = style.gridlines.show && style.subtotalOpacity < 1 && layout.bars.some((b) => b.bar.kind === BAR_KINDS.subtotal);
 
     const select = (ids: ISelectionId[], multi: boolean) => {
         if (ids.length) onSelect(ids, multi);
         else onClearSelection();
     };
-    // Enter・Space で選ぶ（Ctrl で足す）、Esc で外す。役割と名前は一覧の選択肢として各要素に付ける
+    // Enter・Space で選ぶ（Ctrl で足す）、Ctrl+Shift+C で外す。役割と名前は一覧の選択肢として各要素に付ける
     const keyHandler = (ids: ISelectionId[]) => selectKeyDown((multi) => select(ids, multi), onClearSelection);
 
     // 中身の大きさ（スクロールの方向は中身の長さ、もう一方は窓と同じ）
@@ -229,6 +246,17 @@ export const App: React.FC<AppProps> = ({
             pointerEvents="none"
         />
     );
+
+    // 「画像としてコピー」：スクロールするときは、スクロールしない大きさで同じグラフを見えない所に描き直し、隠れた所まで撮る（shared/wholeImage）。
+    // 描き直したほうは画面と同じ値・選択で描き、visual.ts へ値の軸の長さを知らせない。大きすぎるとき・スクロールしないときは見えている範囲
+    const captureWhole = async (root: HTMLElement, background: string) =>
+        (await wholeChartImage(
+            root,
+            background,
+            grownSize(viewport, hiddenOf(root.querySelector(SCROLLERS))),
+            (size) => <App {...props} viewport={size} />,
+            (host) => host.querySelector(SCROLLERS)
+        )) ?? chartImage(root, background);
 
     return (
         <div className="wf-container" style={{ width: viewport.width, height: viewport.height }} {...backgroundHandlers}>
@@ -276,7 +304,15 @@ export const App: React.FC<AppProps> = ({
                         )}
                         {referenceLines.filter((ref) => ref.layer === "back").map(referenceLine)}
 
-                        <g className="wf-bars" id={gridMasked ? `${gridMaskId}-bars` : undefined}>
+                        {/* 項目の数だけ並ぶもの（棒・接続線・軸を切った印・データ ラベル・項目名）は ListGroup で包む。項目を入れ替えて続けて
+                            置き直す子が多いとき、並びの入れ物ごと作り直す（1 つずつ差し込むと項目の数の 2 乗の時間がかかる。listGeneration.ts）。
+                            keys は中の子と同じ key を同じ並びで渡す */}
+                        <ListGroup
+                            keys={layout.bars.map((b) => b.bar.key)}
+                            className="wf-bars"
+                            id={gridMasked ? `${gridMaskId}-bars` : undefined}
+                            onRebuildUnderPointer={() => onTooltipHide?.()}
+                        >
                             {layout.bars.map((b, index) => {
                                 const { bar } = b;
                                 const ids = bar.selectionIds;
@@ -300,7 +336,7 @@ export const App: React.FC<AppProps> = ({
                                         onContextMenu={(e) => {
                                             e.preventDefault();
                                             e.stopPropagation();
-                                            onContextMenu(ids[0] ?? null, e.clientX, e.clientY);
+                                            onContextMenu(ids, e.clientX, e.clientY);
                                         }}
                                         onMouseEnter={(e) => onTooltipShow?.(bar, e.clientX, e.clientY)}
                                         onMouseMove={(e) => onTooltipMove?.(bar, e.clientX, e.clientY)}
@@ -375,32 +411,40 @@ export const App: React.FC<AppProps> = ({
                                     </g>
                                 );
                             })}
-                        </g>
+                        </ListGroup>
 
                         {/* 接続線は棒の上に描く（標準と同じ）。線は棒の端に乗るので、棒の後ろに描くと半分が隠れて細く見えた（1.11.8.0 まで） */}
-                        {style.connectors.show &&
-                            layout.connectors.map((c, i) => (
-                                <line
-                                    key={`connector-${i}`}
-                                    className="wf-connector"
-                                    {...lineProps(c)}
-                                    stroke={style.connectors.color}
-                                    strokeWidth={style.connectors.width}
-                                    strokeDasharray={style.connectors.dash ?? undefined}
-                                    strokeLinecap={style.connectors.cap}
-                                    pointerEvents="none"
-                                />
-                            ))}
-
-                        {layout.breaks.map((br, i) => (
-                            // 切った印。背景の色の隙間と、その両側の細い線（目立たせない。濃い縁取りは使わない）
-                            <g key={`break-${i}`} className="wf-break" pointerEvents="none">
-                                <path d={br.gap} fill={style.background} />
-                                {br.edges.map((d, j) => (
-                                    <path key={j} d={d} fill="none" stroke={style.gridlines.color} strokeWidth={0.75} />
+                        {style.connectors.show && (
+                            <ListGroup keys={layout.connectors.map((_, i) => `connector-${i}`)} className="wf-connectors">
+                                {layout.connectors.map((c, i) => (
+                                    <line
+                                        key={`connector-${i}`}
+                                        className="wf-connector"
+                                        {...lineProps(c)}
+                                        stroke={style.connectors.color}
+                                        strokeWidth={style.connectors.width}
+                                        strokeDasharray={style.connectors.dash ?? undefined}
+                                        strokeLinecap={style.connectors.cap}
+                                        pointerEvents="none"
+                                    />
                                 ))}
-                            </g>
-                        ))}
+                            </ListGroup>
+                        )}
+
+                        {/* 切った印は、根元が余白に届く合計の棒ごとに 1 つ（小計の列では区切りごと）なので、項目の数だけ並ぶことがある */}
+                        {layout.breaks.length > 0 && (
+                            <ListGroup keys={layout.breaks.map((_, i) => `break-${i}`)} className="wf-breaks">
+                                {layout.breaks.map((br, i) => (
+                                    // 切った印。背景の色の隙間と、その両側の細い線（目立たせない。濃い縁取りは使わない）
+                                    <g key={`break-${i}`} className="wf-break" pointerEvents="none">
+                                        <path d={br.gap} fill={style.background} />
+                                        {br.edges.map((d, j) => (
+                                            <path key={j} d={d} fill="none" stroke={style.gridlines.color} strokeWidth={0.75} />
+                                        ))}
+                                    </g>
+                                ))}
+                            </ListGroup>
+                        )}
 
                         {referenceLines.filter((ref) => ref.layer !== "back").map(referenceLine)}
                         {/* 目標の線はマウスを当てるとツールヒントで名前と値を出す（凡例を消しても名前が分かるように）。当たりは線より少し太く */}
@@ -421,55 +465,64 @@ export const App: React.FC<AppProps> = ({
                                 )
                         )}
 
-                        {style.dataLabels.show &&
-                            layout.bars.map(
-                                (b) =>
-                                    b.label && (
-                                        <Text
-                                            key={`label-${b.bar.key}`}
-                                            layout={b.label}
-                                            className="wf-label"
-                                            opacity={
-                                                selectionActive && !b.segments.some((s) => segmentPicked(b.bar, s.segment)) ? DIM_OPACITY : 1
-                                            }
-                                        />
-                                    )
-                            )}
+                        {style.dataLabels.show && (
+                            <ListGroup keys={layout.bars.filter((b) => b.label).map((b) => `label-${b.bar.key}`)} className="wf-labels">
+                                {layout.bars.map(
+                                    (b) =>
+                                        b.label && (
+                                            <Text
+                                                key={`label-${b.bar.key}`}
+                                                layout={b.label}
+                                                className="wf-label"
+                                                opacity={
+                                                    selectionActive && !b.segments.some((s) => segmentPicked(b.bar, s.segment)) ? DIM_OPACITY : 1
+                                                }
+                                            />
+                                        )
+                                )}
+                            </ListGroup>
+                        )}
 
                         {/* カテゴリのラベルを押すと、その棒を選ぶ（標準と同じ。Ctrl で足す、Enter・Space も） */}
-                        {layout.bars.map((b) => {
-                            if (!b.category) return null;
-                            const ids = b.bar.selectionIds;
-                            const text = (
-                                <Text
-                                    key={`category-${b.bar.key}`}
-                                    layout={b.category}
-                                    className={layout.rotatedCategories ? "wf-category wf-category-rotated" : "wf-category"}
-                                    title={b.category.title}
-                                    hover={ids.length > 0}
-                                />
-                            );
-                            // 選ぶものが無い棒（行の無い合計など）のラベルは、押せる当たりにしない（名前だけのボタンに Tab で止まらないように）
-                            if (!ids.length) return text;
-                            return (
-                                <g
-                                    key={`category-${b.bar.key}`}
-                                    className="wf-category-hit"
-                                    {...selectKeyProps({
-                                        label: b.bar.fullLabel,
-                                        pressed: ids.every((id) => selectedIds.some((s) => s.equals(id))),
-                                        onSelect: (multi) => select(ids, multi),
-                                        onClear: onClearSelection,
-                                    })}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        select(ids, e.ctrlKey || e.metaKey);
-                                    }}
-                                >
-                                    {text}
-                                </g>
-                            );
-                        })}
+                        {/* 選ぶものが無い棒の項目名は、当たり（g）で包まずに描く。要素の種類が変わると置き直しになるので、keys には種類も並べる */}
+                        <ListGroup
+                            keys={layout.bars.filter((b) => b.category).map((b) => `${b.bar.selectionIds.length ? "hit" : "text"}|category-${b.bar.key}`)}
+                            className="wf-categories"
+                        >
+                            {layout.bars.map((b) => {
+                                if (!b.category) return null;
+                                const ids = b.bar.selectionIds;
+                                const text = (
+                                    <Text
+                                        key={`category-${b.bar.key}`}
+                                        layout={b.category}
+                                        className={layout.rotatedCategories ? "wf-category wf-category-rotated" : "wf-category"}
+                                        title={b.category.title}
+                                        hover={ids.length > 0}
+                                    />
+                                );
+                                // 選ぶものが無い棒（行の無い合計など）のラベルは、押せる当たりにしない（名前だけのボタンに Tab で止まらないように）
+                                if (!ids.length) return text;
+                                return (
+                                    <g
+                                        key={`category-${b.bar.key}`}
+                                        className="wf-category-hit"
+                                        {...selectKeyProps({
+                                            label: b.bar.fullLabel,
+                                            pressed: ids.every((id) => inSelection(id)),
+                                            onSelect: (multi) => select(ids, multi),
+                                            onClear: onClearSelection,
+                                        })}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            select(ids, e.ctrlKey || e.metaKey);
+                                        }}
+                                    >
+                                        {text}
+                                    </g>
+                                );
+                            })}
+                        </ListGroup>
                     </g>
                 </svg>
             </div>
@@ -486,23 +539,38 @@ export const App: React.FC<AppProps> = ({
                 {referenceLines.map((ref, i) => ref.label && <Text key={`reference-label-${i}`} layout={ref.label} className="wf-reference-label" />)}
 
                 {layout.legend && (
+                    // 凡例は箱の大きさで切り抜く（縮めても入らない名前・タイトルを描く範囲・軸・項目名に重ねず、はみ出した所でマウスを取らない）。
+                    // 中の座標はビューのまま（viewBox を箱と同じにする）。入れ子の svg は外の svg と一緒に画像のコピーに写る
+                    <svg
+                        className="wf-legend-box"
+                        x={layout.legend.box.x}
+                        y={layout.legend.box.y}
+                        width={layout.legend.box.width}
+                        height={layout.legend.box.height}
+                        viewBox={`${layout.legend.box.x} ${layout.legend.box.y} ${layout.legend.box.width} ${layout.legend.box.height}`}
+                        overflow="hidden"
+                    >
                     <g className="wf-legend" role="group" aria-label="凡例">
                         {layout.legend.title && <Text layout={layout.legend.title} className="wf-legend-title" />}
-                        {layout.legend.arrows &&
-                            [layout.legend.arrows.prev, layout.legend.arrows.next].map((arrow, k) => (
-                                <LegendArrowButton
-                                    key={`legend-arrow-${k}`}
-                                    arrow={arrow}
-                                    color={layout.legend!.font.color}
-                                    // Fluent 2 の枠なしのボタンの色。テーマの地から作る（ハイコントラストでは前景色と背景色だけ）
-                                    colors={hc ? controlColorsOf(hc.foreground, hc.background, true) : controlColorsOf(DARK_TEXT, style.background)}
-                                    label={k === 0 ? "凡例の前のページ" : "凡例の次のページ"}
-                                    onPress={() => setLegendPage(Math.max(0, Math.min(layout.legend!.pageCount - 1, layout.legend!.page + (k === 0 ? -1 : 1))))}
-                                />
-                            ))}
+                        {layout.legend.arrows && (
+                            // ページを送る矢印はマウスで押す（外の svg はマウスを通すので、受け直す）
+                            <g pointerEvents="auto">
+                                {[layout.legend.arrows.prev, layout.legend.arrows.next].map((arrow, k) => (
+                                    <LegendArrowButton
+                                        key={`legend-arrow-${k}`}
+                                        arrow={arrow}
+                                        color={layout.legend!.font.color}
+                                        // Fluent 2 の枠なしのボタンの色。テーマの地から作る（ハイコントラストでは前景色と背景色だけ）
+                                        colors={hc ? controlColorsOf(hc.foreground, hc.background, true) : controlColorsOf(DARK_TEXT, style.background)}
+                                        label={k === 0 ? "凡例の前のページ" : "凡例の次のページ"}
+                                        onPress={() => setLegendPage(Math.max(0, Math.min(layout.legend!.pageCount - 1, layout.legend!.page + (k === 0 ? -1 : 1))))}
+                                    />
+                                ))}
+                            </g>
+                        )}
                         {/* 一覧の選択肢は項目だけ（矢印・タイトルは一覧の外） */}
                         <g role="listbox" aria-label="凡例の項目">
-                        {layout.legend.items.map(({ item, index, x, swatchWidth, y, textY, text }) => {
+                        {layout.legend.items.map(({ item, index, x, swatchWidth, y, textX, textY, text, lineX1, lineX2 }) => {
                             const ids = item.selectionId ? [item.selectionId] : [];
                             const selectable = ids.length > 0;
                             const dim = selectionActive && selectable && !isSelected(ids);
@@ -524,13 +592,14 @@ export const App: React.FC<AppProps> = ({
                                     onKeyDown={keyHandler(ids)}
                                 >
                                     {item.line ? (
-                                        // 目標の線：グラフの線と同じ色・種類の線（色はハイコントラストでは前景色になっている）
+                                        // 目標の線：グラフの線と同じ色・種類の線（色はハイコントラストでは前景色になっている）。線の両端は組み方が
+                                        // 決める（線の模様と端の形で見える左の端が x に来る所から、線の印の長さ）
                                         <line
                                             className="wf-legend-line"
-                                            x1={x}
-                                            y1={y + 5}
-                                            x2={x + swatchWidth}
-                                            y2={y + 5}
+                                            x1={lineX1}
+                                            y1={y + layout.legend!.swatch / 2}
+                                            x2={lineX2}
+                                            y2={y + layout.legend!.swatch / 2}
                                             stroke={item.color}
                                             strokeWidth={item.line.width}
                                             strokeDasharray={item.line.dash ?? undefined}
@@ -539,7 +608,7 @@ export const App: React.FC<AppProps> = ({
                                     ) : (
                                         // 棒に角丸があれば、印も値の向きの端（縦向きは上、横向きは右）を丸める
                                         barShape(
-                                            { x, y, width: swatchWidth, height: 10 },
+                                            { x, y, width: swatchWidth, height: layout.legend!.swatch },
                                             style.columns.cornerRadius > 0
                                                 ? {
                                                       // 合計は値の端だけ（範囲の反転では逆の端）、浮いた増減は両端（棒と同じ）
@@ -551,7 +620,7 @@ export const App: React.FC<AppProps> = ({
                                                               : item.kind === BAR_KINDS.total
                                                                 ? [style.valueAxis.invert ? "bottom" : "top"]
                                                                 : ["top", "bottom"],
-                                                      radius: Math.min(style.columns.cornerRadius, 10 / 3),
+                                                      radius: Math.min(style.columns.cornerRadius, layout.legend!.swatch / 3),
                                                   }
                                                 : null,
                                             {
@@ -562,7 +631,7 @@ export const App: React.FC<AppProps> = ({
                                         )
                                     )}
                                     <text
-                                        x={x + swatchWidth + 4}
+                                        x={textX}
                                         y={textY}
                                         style={{
                                             fontFamily: font.family,
@@ -580,6 +649,7 @@ export const App: React.FC<AppProps> = ({
                         })}
                         </g>
                     </g>
+                    </svg>
                 )}
 
                 {layout.notice && (
@@ -600,6 +670,7 @@ export const App: React.FC<AppProps> = ({
                     background={style.background}
                     colors={hc ? { foreground: hc.foreground, background: hc.background } : undefined}
                     browserMenu={browserMenu}
+                    capture={captureWhole}
                 />
             )}
         </div>

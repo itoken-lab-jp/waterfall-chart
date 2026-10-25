@@ -19,9 +19,22 @@ import Model = formattingSettings.Model;
 import { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS } from "./shared/units";
 import { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, LegendPosition, standardLegendPosition, legendPlacementValue } from "./shared/legend";
 import { AutoNumUpDown, itemOf, dropdownValue, TITLE_STYLES, TITLE_STYLE_ITEMS, LABEL_ORIENTATIONS, LABEL_ORIENTATION_ITEMS } from "./shared/formatting";
-import { SCROLL_START_ITEMS } from "./shared/scrollStart";
+import { AXIS_SCROLL_START_ITEMS } from "./shared/scrollStart";
 import { NEGATIVE_STYLE_ITEMS, ZERO_STYLE_ITEMS, SIGN_TONE_MODE_ITEMS, DEFAULT_GOOD_COLOR, DEFAULT_BAD_COLOR } from "./shared/numberFormat";
-import { legendParts, gridlineParts, categoryAxisParts, valueAxisParts, labelValueParts, labelBackgroundParts, labelHaloParts, fontControl as sharedFontControl } from "./shared/formatCards";
+import {
+    applyNumberRanges,
+    FONT_SIZE_RANGE,
+    legendParts,
+    gridlineParts,
+    categoryAxisParts,
+    valueAxisParts,
+    labelValueParts,
+    labelBackgroundParts,
+    labelHaloParts,
+    fontControl as sharedFontControl,
+    NumberRange,
+    DEFAULT_FONT_FAMILY,
+} from "./shared/formatCards";
 import { applyThemeBasics } from "./shared/theme";
 import { referenceLineParts, syncReferenceLineVisibility, VALUE_SHADE_REGION_ITEMS } from "./shared/referenceLine";
 import { LINE_STYLES, LINE_STYLE_ITEMS } from "./shared/gridlines";
@@ -131,8 +144,11 @@ export const LABEL_POSITION_ITEMS: powerbi.IEnumMember[] = [
 /** データ ラベルの表示単位。auto は Y 軸と同じ */
 export const LABEL_UNIT_TYPES: powerbi.IEnumMember[] = [{ value: "auto", displayName: "Y 軸と同じ" }, ...UNIT_TYPES.slice(1)];
 
-/** 既定のフォント。レポートのテーマに合わせるのが基本なので Power BI 標準と同じ並びを初期値にする */
-export const DEFAULT_FONT_FAMILY = '"Segoe UI", wf_segoe-ui_normal, helvetica, arial, sans-serif';
+/**
+ * 既定のフォント（Segoe UI）。書式ペインのフォントの欄に出る名前。
+ * 1.15 までは代わりのフォントまで並べた指定（"Segoe UI", wf_segoe-ui_normal, …）で、保存した値はそのまま読む
+ */
+export { DEFAULT_FONT_FAMILY };
 
 /**
  * 軸のタイトル・凡例の文字の既定。標準のウォーターフォールと同じ DIN 12・10（2026-09-23 に Desktop で並べて確認）。
@@ -147,6 +163,19 @@ export const LEGEND_FONT_SIZE = 10;
  * 書式では「比較」「イベント」という言葉を使わない（2026-09-19 のユーザーの決め）
  */
 const NO_EVENT: powerbi.IEnumMember = { value: "", displayName: "（なし）" };
+
+/** Y 軸の単位ラベルの位置。valueAxisTop = 値の軸の目盛りの列の端（縦向きは上、横向きは右下）、plotTopRight = 描く範囲の右上 */
+export const UNIT_POSITIONS: powerbi.IEnumMember[] = [
+    { value: "valueAxisTop", displayName: "Y 軸の上 (左上)" },
+    { value: "plotTopRight", displayName: "プロット エリアの右上" },
+    { value: "none", displayName: "非表示" },
+];
+
+/** 単位ラベルの書き方。表示される形そのものを選択肢の名前にする */
+export const UNIT_STYLES: powerbi.IEnumMember[] = [
+    { value: "parentheses", displayName: "(百万円)" },
+    { value: "withPrefix", displayName: "(単位: 百万円)" },
+];
 
 /** データ ラベルの背景の既定（標準のウォーターフォールと同じ黒・透過性 90%） */
 export const DEFAULT_LABEL_BACKGROUND = "#000000";
@@ -286,16 +315,19 @@ export class LayoutCardSettings extends SimpleCard {
      * イベントの選択肢を流し込み、形で意味の無い設定を隠す。
      * events が 2 つ未満（比べる形でない）ときは、イベントの設定を隠す。
      * left / right は viewModel が生の objects から読んで解決した名前（保存値が今のデータに無ければ既定の最初と最後）。
-     * 形 1 では右端のイベントが最後の合計の代わりになるので、最後の合計の設定を隠す。起点の取り方は起点があるときだけ
+     * 形 1 では右端のイベントが最後の合計の代わりになるので、最後の合計の設定を隠す。起点の取り方は起点があるときだけ。
+     * つなぎ方はイベントが 3 つ以上のときだけ（2 つなら両端だけとすべてを順にが同じ）
      */
     applyEvents(events: string[], left: string, right: string, hasOrigin = false): void {
         const compare = events.length >= 2;
-        this.connectMode.visible = compare;
+        // 比べる段が 2 つなら、両端だけとすべてを順には同じ棒になる
+        this.connectMode.visible = events.length > 2;
         this.leftEvent.visible = compare;
         this.rightEvent.visible = compare;
         this.leftBreakdown.visible = compare;
         this.totalShow.visible = !compare;
-        this.totalLabel.visible = !compare;
+        // 名前は最後の合計を出すときだけ使う
+        this.totalLabel.visible = !compare && (this.totalShow.value ?? true);
         this.originMode.visible = hasOrigin;
         if (!compare) return;
         const items = events.map((name) => ({ value: name, displayName: name }));
@@ -322,7 +354,7 @@ export class OthersCardSettings extends SimpleCard {
 
     topLevelSlice = this.show;
 
-    /** 素の numeric に options を付けない（format-pane Skill）。範囲は viewModel でクランプする */
+    /** 欄の範囲は NUMBER_RANGES（描くときも viewModel で同じ範囲に丸める） */
     count = new formattingSettings.NumUpDown({
         name: "count",
         displayName: "最大の内訳",
@@ -400,7 +432,7 @@ export class ColumnsCardSettings extends CompositeCard {
     /**
      * 比べる形の小計の透過性。色は増加・減少の色（差が 0 以上なら増加、マイナスなら減少）を使い、
      * これだけ透かして描く（ユーザー、2026-09-19「小計の色はほかの上下の色と合わせて、透明度だけ落とす」）。
-     * 保存先の名前は subtotalTransparency のまま。素の numeric なので options を付けない。viewModel で 0〜100 にクランプする
+     * 保存先の名前は subtotalTransparency のまま。欄の範囲は NUMBER_RANGES（viewModel も 0〜100 に丸める）
      */
     subtotalTransparency = new formattingSettings.NumUpDown({
         name: "subtotalTransparency",
@@ -439,7 +471,7 @@ export class ColumnsCardSettings extends CompositeCard {
 
     /**
      * 棒の角丸（既定 0）。棒の端を丸め、値 0 の軸に乗っている端だけ四角にする（合計は値の端だけ、浮いた増減・小計は両端）。
-     * 素の numeric なので options を付けない。viewModel で 0〜30 にクランプする
+     * 欄の範囲は NUMBER_RANGES（viewModel も 0〜30 に丸める）
      */
     cornerRadius = new formattingSettings.NumUpDown({
         name: "cornerRadius",
@@ -501,10 +533,13 @@ export class LegendCardSettings extends CompositeCard {
     name = "legend";
     displayName = "凡例";
 
-    private parts = legendParts({ showDisplayName: "凡例", titleShow: false, font: { controlName: "fontControl", displayName: "フォント", size: LEGEND_FONT_SIZE, family: DEFAULT_FONT_FAMILY } });
+    // タイトルの既定はオン（標準と同じ）。テーマに値があればテーマに従う（applyThemeDefaults）
+    private parts = legendParts({ showDisplayName: "凡例", titleShow: true, font: { controlName: "fontControl", displayName: "フォント", size: LEGEND_FONT_SIZE, family: DEFAULT_FONT_FAMILY } });
     show = this.parts.show;
     topLevelSlice = this.show;
     position = this.parts.position;
+    /** 上下に置いた凡例の行数（左右に置いたときは出さない。syncRows） */
+    rows = this.parts.rows;
     font = this.parts.font;
     labelColor = this.parts.labelColor;
     titleShow = this.parts.titleShow;
@@ -514,6 +549,11 @@ export class LegendCardSettings extends CompositeCard {
     titleGroup = this.parts.titleGroup;
 
     groups = [this.optionsGroup, this.textGroup, this.titleGroup];
+
+    /** 行数は、位置が上・下のときだけ出す */
+    syncRows(): void {
+        this.parts.syncRows();
+    }
 }
 
 /** 棒と棒をつなぐ線（標準と同じ「接続線」。ユーザーの言葉、2026-09-20） */
@@ -536,7 +576,7 @@ export class ConnectorsCardSettings extends SimpleCard {
         value: { value: "" },
     });
 
-    /** 素の numeric なので options を付けない。viewModel で 0.5〜10 にクランプする */
+    /** 欄の範囲は NUMBER_RANGES（viewModel も 0.5〜10 に丸める） */
     width = new formattingSettings.NumUpDown({
         name: "width",
         displayName: "幅 (px)",
@@ -576,10 +616,11 @@ export class DataLabelsCardSettings extends CompositeCard {
         transparency: DEFAULT_LABEL_BACKGROUND_TRANSPARENCY,
     });
 
+    /** 既定はオフ（標準のウォーターフォールと同じ）。保存したレポートは保存値どおり */
     show = new formattingSettings.ToggleSwitch({
         name: "show",
         displayName: "データ ラベル",
-        value: true,
+        value: false,
     });
 
     topLevelSlice = this.show;
@@ -831,8 +872,9 @@ export class CategoryAxisCardSettings extends CompositeCard {
         font: { controlName: "fontControl", displayName: "フォント", size: 9, family: DEFAULT_FONT_FAMILY },
         titleFont: { controlName: "titleControl", prefix: "title", displayName: "フォント", size: AXIS_TITLE_FONT_SIZE, family: AXIS_TITLE_FONT_FAMILY },
         titleStyleItems: TITLE_STYLE_ITEMS,
-        scrollStartItems: SCROLL_START_ITEMS,
-        sliders: false,
+        scrollStartItems: AXIS_SCROLL_START_ITEMS,
+        // 高さの最大値・カテゴリの最小幅は、標準と同じく数値の欄＋スライダー
+        sliders: true,
     });
     show = this.parts.show;
     font = this.parts.font;
@@ -932,6 +974,41 @@ export class ValueAxisCardSettings extends CompositeCard {
     unitShow = this.parts.unitShow;
     unitText = this.parts.unitText;
 
+    unitPosition = new formattingSettings.ItemDropdown({
+        name: "unitPosition",
+        displayName: "位置",
+        items: UNIT_POSITIONS,
+        value: UNIT_POSITIONS[0],
+    });
+
+    unitStyle = new formattingSettings.ItemDropdown({
+        name: "unitStyle",
+        displayName: "スタイル",
+        items: UNIT_STYLES,
+        value: UNIT_STYLES[0],
+    });
+
+    /** オフにすると、単位の語（百万など）を付けず、単位の追加文字だけを出す（軸のタイトルの単位も同じ） */
+    unitIncludeDisplayUnit = new formattingSettings.ToggleSwitch({
+        name: "unitIncludeDisplayUnit",
+        displayName: "表示単位（百万など）を付ける",
+        value: true,
+    });
+
+    /** 空 = 値（目盛り）の文字サイズ。保存していなければ、目盛りの大きさを書式ペインにも出す（applyData） */
+    unitFontSize = new AutoNumUpDown({
+        name: "unitFontSize",
+        displayName: "単位文字サイズ",
+        value: undefined,
+    });
+
+    /** 空 = 値（目盛り）のカラー。保存していなければ、目盛りの色を書式ペインにも出す（applyData） */
+    unitColor = new formattingSettings.ColorPicker({
+        name: "unitColor",
+        displayName: "単位カラー",
+        value: { value: "" },
+    });
+
     rangeGroup = new Group({
         name: "valueRange",
         displayName: "範囲",
@@ -951,27 +1028,29 @@ export class ValueAxisCardSettings extends CompositeCard {
         name: "valueUnit",
         displayName: "単位ラベル",
         topLevelSlice: this.unitShow,
-        slices: [this.unitText],
+        slices: [this.unitText, this.unitPosition, this.unitStyle, this.unitIncludeDisplayUnit, this.unitFontSize, this.unitColor],
     });
 
     groups = [this.rangeGroup, this.valuesGroup, this.titleGroup, this.unitGroup];
 }
 
-/** グリッド線（値の軸の目盛りの線）。既定は標準と同じ点線 */
-export class GridlinesCardSettings extends SimpleCard {
+/**
+ * グリッド線（値の軸の目盛りの線）。既定は標準と同じ点線。
+ * 表示のトグルは「横」のまとまりの見出しに置く（保存先は horizontalShow のまま。1.15 まではカードの見出し）
+ */
+export class GridlinesCardSettings extends CompositeCard {
     name = "gridlines";
     displayName = "グリッド線";
 
     private horizontal = gridlineParts({
         prefix: "horizontal",
-        showDisplayName: "グリッド線",
+        showDisplayName: "横",
         show: true,
         styleItems: LINE_STYLE_ITEMS,
         style: itemOf(LINE_STYLE_ITEMS, LINE_STYLES.dotted),
     });
 
     horizontalShow = this.horizontal.show;
-    topLevelSlice = this.horizontalShow;
     horizontalColor = this.horizontal.color;
     horizontalTransparency = this.horizontal.transparency;
     horizontalStyle = this.horizontal.style;
@@ -980,7 +1059,14 @@ export class GridlinesCardSettings extends SimpleCard {
     horizontalDashCap = this.horizontal.dashCap;
     horizontalWidth = this.horizontal.width;
 
-    slices = this.horizontal.slices;
+    horizontalGroup = new Group({
+        name: "horizontalGridlines",
+        displayName: "横",
+        topLevelSlice: this.horizontalShow,
+        slices: this.horizontal.slices,
+    });
+
+    groups = [this.horizontalGroup];
 
     /** 線のスタイルがカスタムのときだけ、ダッシュ配列とダッシュ キャップを出す */
     syncCustomDash(): void {
@@ -999,7 +1085,39 @@ export interface DataDrivenFormat {
     horizontal: boolean;
     /** 比べる形で小計を挟んでいる（浮いた小計の棒がある） */
     subtotalDiff: boolean;
+    /** 左端の合計の棒（比べる形の左端のイベント、起点）がある。起点の色を使う */
+    hasStart: boolean;
 }
+
+const PERCENT_RANGE: NumberRange = [0, 100];
+
+/**
+ * 数値の欄の下限・上限（オブジェクト名.プロパティ名）。描くときに丸める範囲と同じにする（viewModel.ts・shared の referenceLine.ts と
+ * halo.ts）。フォントの部品の文字サイズは FONT_SIZE_RANGE。範囲がずれていないかは test/numberRanges.test.tsx が描画と突き合わせる
+ * 素の numeric の欄にも付ける。以前は書式ペインが丸ごと空になった記録があり、2026-09 の Desktop では再現しなかった（format-pane Skill）。
+ * 書式ペインが空になったら、まずここを疑う
+ */
+export const NUMBER_RANGES: Readonly<Record<string, NumberRange>> = {
+    "others.count": [1, 1000],
+    "columns.subtotalTransparency": PERCENT_RANGE,
+    "columns.outerPadding": PERCENT_RANGE,
+    "columns.categorySpacing": [0, 50],
+    "columns.cornerRadius": [0, 30],
+    "connectors.width": [0.5, 10],
+    "dataLabels.backgroundTransparency": PERCENT_RANGE,
+    "dataLabels.haloWidth": [0, 10],
+    "target.width": [0.5, 10],
+    "constantLine.transparency": PERCENT_RANGE,
+    "constantLine.width": [1, 10],
+    "constantLine.shadeTransparency": PERCENT_RANGE,
+    "constantLine.labelFontSize": FONT_SIZE_RANGE,
+    "valueAxis.unitFontSize": FONT_SIZE_RANGE,
+    "categoryAxis.maxHeight": [5, 100],
+    // スライダーは上限が要る。500 px（描くときも 500 で丸める）
+    "categoryAxis.minCategoryWidth": [0, 500],
+    "gridlines.horizontalTransparency": PERCENT_RANGE,
+    "gridlines.horizontalWidth": [0.5, 10],
+};
 
 export class VisualFormattingSettingsModel extends Model {
     layout = new LayoutCardSettings();
@@ -1032,6 +1150,11 @@ export class VisualFormattingSettingsModel extends Model {
         this.constantLine,
     ];
 
+    constructor() {
+        super();
+        applyNumberRanges(this.cards, NUMBER_RANGES);
+    }
+
     /**
      * 基本テーマ・カスタムテーマに合わせる。テーマは標準のビジュアルの名前（showAxisTitle・showTitle）で
      * 値を持つので、capabilities にその名前も置いて受け取り、作り手が自作の設定（titleShow）を保存していないときの既定にする。
@@ -1053,6 +1176,8 @@ export class VisualFormattingSettingsModel extends Model {
             lineStyleItems: LINE_STYLE_ITEMS,
             gridlineWidthMin: 0.5,
         });
+        // 凡例の行数は、位置（読み替えたあと）が上・下のときだけ出す
+        this.legend.syncRows();
 
         // 合計・小計の文字（太字）は標準に項目が無く、テーマの文字の大きさ・フォントが届かない。変えていなければ、ふつうの文字と
         // 同じにする（Fluent 2 は項目名を 10.5 にするので、1.11.1.0 までは合計・小計の名前だけ 9 のまま小さく見えた）
@@ -1076,6 +1201,17 @@ export class VisualFormattingSettingsModel extends Model {
         this.gridlines.syncCustomDash();
         this.columns.subtotalStyle.visible = data.subtotalDiff;
         this.columns.subtotalTransparency.visible = data.subtotalDiff && this.columns.subtotalStyle.value?.value === SUBTOTAL_STYLES.fill;
+        // 起点の色は左端の合計の棒があるときだけ、その他の色はまとめるときだけ使う。凡例で積むと、その他の棒も凡例の色で塗る
+        this.columns.startFill.visible = data.hasStart;
+        this.columns.othersFill.visible = (this.others.show.value ?? false) && data.seriesTargets.length === 0;
+        // 凡例で積むと増減の棒は凡例の色で塗る。増加・減少の色を使うのは比べる形の小計の棒だけ
+        const deltaColors = data.seriesTargets.length === 0 || data.subtotalDiff;
+        this.columns.increaseFill.visible = deltaColors;
+        this.columns.decreaseFill.visible = deltaColors;
+        // 単位ラベルの文字サイズ・カラーは、保存していなければ値（目盛り）と同じものを書式ペインにも出す（保存はしない）
+        const axis = this.valueAxis;
+        if (axis.unitFontSize.value == null) axis.unitFontSize.value = axis.font.fontSize.value;
+        if (!axis.unitColor.value?.value) axis.unitColor.value = { value: axis.labelColor.value?.value ?? "" };
         this.categoryAxis.displayName = data.horizontal ? "Y 軸" : "X 軸";
         this.valueAxis.displayName = data.horizontal ? "X 軸" : "Y 軸";
         this.categoryAxis.maxHeight.displayName = data.horizontal ? "幅の最大値 (%)" : "高さの最大値 (%)";

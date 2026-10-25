@@ -1,11 +1,11 @@
 {
   "name": "waterfall-chart",
-  "version": "1.15.8.0",
+  "version": "1.15.11.0",
   "description": "計画から実績までの差を、階層でドリルダウンしてたどるウォーターフォール",
   "license": "MIT",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "package": "pbiviz package --skip-api",

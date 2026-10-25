@@ -85,10 +85,10 @@ npm install
 npx pbiviz package
 ```
 
-`dist/` に `.pbiviz` ができます。Node.js 22 以降と、[powerbi-visuals-tools](https://www.npmjs.com/package/powerbi-visuals-tools) 7 系で確かめています。
+`dist/` に `.pbiviz` ができます。Node.js 20.19 以上と npm が必要です（配布の前のビルドは Node.js 22 と [powerbi-visuals-tools](https://www.npmjs.com/package/powerbi-visuals-tools) 7 系で確かめています）。
 
 ## ライセンス・問い合わせ
 
 MIT ライセンスです（[LICENSE](LICENSE)）。商用利用・改変・再配布ができます（無保証）。
 
-不具合の報告と質問は [Issues](https://github.com/itoken-lab-jp/waterfall-chart/issues) へお願いします。個別の相談や開発の依頼はお受けしていません。
+不具合の報告と質問は [Issues](https://github.com/itoken-lab-jp/waterfall-chart/issues) へお願いします。ほしい機能は、Issues、[note](https://note.com/itoken_lab) のコメント、[X](https://x.com/itokenlab) の DM のどれからでも教えてください。

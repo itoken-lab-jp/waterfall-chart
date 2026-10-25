@@ -6,7 +6,7 @@
  * 1. ぶつかってはいけない物（障害物）を、四角か太さのある線分の一覧に集める
  * 2. ラベルごとに、置いてよい場所の候補を好ましい順に持つ
  * 3. 大事なラベルから順に（呼ぶ側が並べた順に）、候補を上から試し、何ともぶつからない最初の場所に置く。
- *    置いたラベルは、あとのラベルの障害物になる
+ *    置いたラベルは、あとのラベルの障害物になる（ラベルどうしは hit の四角で見る。文字の縁はラベルには掛けないが、棒や線には掛けてよい）
  * 4. どこにも置けなければ出さない
  *
  * 自分の棒の中に置く・自分の線に沿って置く候補のために、障害物とラベルに持ち主（owner）を付けられる。
@@ -29,6 +29,11 @@ export type Obstacle =
 export interface Candidate<T> {
     /** 置いたときにラベルが占める四角（余白込み） */
     box: Box;
+    /**
+     * ほかのラベルとの重なりを見る四角。無ければ box。障害物（棒・線）と、収まるか（within・bounds）は box で見る。
+     * 文字の縁のように、ほかのラベルの文字には掛けたくないが、棒や線には掛けてよい（掛かっても読めるようにするための縁）分を足す
+     */
+    hit?: Box;
     /** この四角の中に収まらなければ置けない（棒の中の候補）。無ければ問わない */
     within?: Box;
     item: T;
@@ -162,6 +167,8 @@ class Grid {
 export function placeLabels<T>(requests: LabelRequest<T>[], obstacles: Obstacle[], options: PlaceOptions = {}): Array<Candidate<T> | null> {
     const grid = new Grid();
     for (const o of obstacles) grid.add(o);
+    /** 置いたラベル（hit の四角）。候補の hit と比べる */
+    const labels = new Grid();
     const { bounds } = options;
     return requests.map((request) => {
         const chosen =
@@ -169,10 +176,11 @@ export function placeLabels<T>(requests: LabelRequest<T>[], obstacles: Obstacle[
                 (c) =>
                     (!bounds || contains(bounds, c.box)) &&
                     (!c.within || contains(c.within, c.box)) &&
-                    !grid.hits(c.box, request.owner)
+                    !grid.hits(c.box, request.owner) &&
+                    !labels.hits(c.hit ?? c.box, undefined)
             ) ?? null;
         // 置いたラベルは、あとのラベルの障害物になる（持ち主は付けない：同じ持ち主のラベルどうしも避ける）
-        if (chosen) grid.add({ kind: "box", box: chosen.box });
+        if (chosen) labels.add({ kind: "box", box: chosen.hit ?? chosen.box });
         return chosen;
     });
 }
