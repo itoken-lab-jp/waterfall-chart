@@ -17,6 +17,7 @@
  */
 
 import { REFERENCE_LABEL_TEXTS, ReferenceLineStyle, referenceLabelOf, referenceLineStyleOf, referenceLineSvgStyle, VALUE_SHADE_REGIONS } from "./shared/referenceLine";
+import { PlotAreaFill, plotAreaFillOf } from "./shared/plotArea";
 import powerbi from "powerbi-visuals-api";
 import { scaleLinear } from "d3-scale";
 import { formattingSettings } from "powerbi-visuals-utils-formattingmodel";
@@ -279,6 +280,8 @@ export interface ViewStyle {
         unitFont: TextStyle;
     };
     gridlines: { show: boolean; color: string; opacity: number; width: number; dash: string | null; cap?: "round" | "square" | "butt" };
+    /** プロット領域の背景色。塗らないなら null（ハイコントラストでも塗らない） */
+    plotArea: PlotAreaFill | null;
     /** rows は上下に置いたときに並べる行の数（1 か 2。左右に置いたときは効かない） */
     legend: { show: boolean; position: LegendPosition; rows: number; font: TextStyle; title: string };
     /** cornerRadius：棒の角丸（px）。0 なら丸めない */
@@ -477,6 +480,7 @@ function styleOf(settings: VisualFormattingSettingsModel, host: IVisualHost): Vi
             // 点線は「幅で拡大縮小」でも丸い端の点にする（カスタムはダッシュ キャップ）
             cap: gridStyle === CUSTOM_LINE_STYLE || gridStyle === LINE_STYLES.dotted ? lineCapOf(gridStyle, gridCustom) : undefined,
         },
+        plotArea: hc ? null : plotAreaFillOf(settings.plotArea),
         legend: {
             show: settings.legend.show.value ?? true,
             position: legendPlacementValue(settings.legend.position.value?.value),

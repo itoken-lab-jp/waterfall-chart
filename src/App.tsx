@@ -268,6 +268,19 @@ export const App: React.FC<AppProps> = (props) => {
             >
                 <svg className="wf-svg" width={contentWidth} height={contentHeight} role="group" aria-label="ウォーターフォール">
                     <g transform={`translate(${-region.x} ${-region.y})`}>
+                        {style.plotArea && (
+                            // プロット領域の背景色。グリッド線・棒の下。スクロールするときはスクロールする中身の長さまで塗る
+                            <rect
+                                className="wf-plot-area"
+                                x={layout.plot.x}
+                                y={layout.plot.y}
+                                width={scroll.axis === "x" ? scroll.content : layout.plot.width}
+                                height={scroll.axis === "y" ? scroll.content : layout.plot.height}
+                                fill={style.plotArea.color}
+                                fillOpacity={style.plotArea.opacity}
+                                pointerEvents="none"
+                            />
+                        )}
                         {gridMasked && gridCutout(gridMaskId, `${gridMaskId}-bars`)}
                         <g className="wf-gridlines" mask={gridMasked ? `url(#${gridMaskId})` : undefined}>
                             {style.gridlines.show &&

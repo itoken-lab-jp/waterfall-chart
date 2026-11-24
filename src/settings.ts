@@ -15,6 +15,7 @@ import SimpleCard = formattingSettings.SimpleCard;
 import CompositeCard = formattingSettings.CompositeCard;
 import Group = formattingSettings.Group;
 import Model = formattingSettings.Model;
+import { PlotAreaCardSettings } from "./shared/plotArea";
 
 import { UNIT_TYPES, UNIT_NOTATIONS, PRECISIONS } from "./shared/units";
 import { LEGEND_POSITIONS, LEGEND_POSITION_ITEMS, LegendPosition, standardLegendPosition, legendPlacementValue } from "./shared/legend";
@@ -292,7 +293,7 @@ export class LayoutCardSettings extends SimpleCard {
     copyButton = new formattingSettings.ToggleSwitch({
         name: "copyButton",
         displayName: "画像のコピー",
-        description: "マウスを乗せたとき、右下に「画像としてコピー」のボタンを出す。押すと、見えているグラフを画像としてクリップボードに入れ、PowerPoint などに貼れる",
+        description: "マウスを乗せたとき、右下に「画像としてコピー」のボタンを出す。押すと、スクロールで隠れた所も含めたグラフ全体を画像としてクリップボードに入れ（とても大きいグラフは見えている範囲）、PowerPoint などに貼れる",
         value: true,
     });
 
@@ -1101,6 +1102,7 @@ export const NUMBER_RANGES: Readonly<Record<string, NumberRange>> = {
     "others.count": [1, 1000],
     "columns.subtotalTransparency": PERCENT_RANGE,
     "columns.outerPadding": PERCENT_RANGE,
+    "plotArea.backgroundColorTransparency": PERCENT_RANGE,
     "columns.categorySpacing": [0, 50],
     "columns.cornerRadius": [0, 30],
     "connectors.width": [0.5, 10],
@@ -1128,6 +1130,7 @@ export class VisualFormattingSettingsModel extends Model {
     dataLabels = new DataLabelsCardSettings();
     target = new TargetCardSettings();
     constantLine = new ConstantLineCardSettings();
+    plotArea = new PlotAreaCardSettings();
     categoryAxis = new CategoryAxisCardSettings();
     valueAxis = new ValueAxisCardSettings();
     gridlines = new GridlinesCardSettings();
@@ -1148,6 +1151,8 @@ export class VisualFormattingSettingsModel extends Model {
         this.dataLabels,
         this.target,
         this.constantLine,
+        // 標準と同じく、ビジュアルのタブのいちばん最後
+        this.plotArea,
     ];
 
     constructor() {

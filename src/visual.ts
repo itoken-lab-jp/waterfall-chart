@@ -139,6 +139,7 @@ export class Visual implements IVisual {
     /** 書式設定ペインを開くたび / 値変更のたびに呼ばれる */
     public getFormattingModel(): powerbi.visuals.FormattingModel {
         this.formattingSettings.constantLine.syncVisibility();
+        this.formattingSettings.plotArea.syncVisibility();
         // 使わない符号の色は出さない（触っても何も起きない）
         syncToneColors(this.formattingSettings.dataLabels);
         // 凡例の色の「設定の適用先」の項目は、同じ名前の系列でも uid が重ならないよう番号で振り直す

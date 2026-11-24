@@ -1563,6 +1563,27 @@
                     }
                 }
             }
+        },
+        "plotArea": {
+            "displayName": "プロットエリアの背景",
+            "properties": {
+                "backgroundColor": {
+                    "displayName": "背景色",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "backgroundColorTransparency": {
+                    "displayName": "透過性 (%)",
+                    "type": {
+                        "numeric": true
+                    }
+                }
+            }
         }
     },
     "drilldown": {
